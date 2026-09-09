@@ -27,6 +27,9 @@ let vault: CredentialVault;
 let gateway: ProcessSupervisor | undefined;
 let gatewayEnabled = false;
 const internalGatewayAvailable = process.env.FLOWGATE_INTERNAL_TEST === "1";
+const internalUpstream = internalGatewayAvailable
+  ? process.env.FLOWGATE_INTERNAL_UPSTREAM
+  : undefined;
 const gatewayToken = process.env.FLOWGATE_MODEL_TOKEN ?? randomUUID();
 async function startGateway(directory: string, manifest?: ReleaseSet) {
   if (!internalGatewayAvailable || !gatewayEnabled) return;
@@ -38,9 +41,20 @@ async function startGateway(directory: string, manifest?: ReleaseSet) {
     {
       FLOWGATE_MODEL_TOKEN: gatewayToken,
       FLOWGATE_RELEASE: manifest?.id ?? "bundled",
+      ...(internalUpstream
+        ? { FLOWGATE_INTERNAL_UPSTREAM: internalUpstream }
+        : {}),
     },
   );
   host.onCapability = async (method, payload: any) => {
+    if (
+      method === "egress.resolve" &&
+      payload?.id === "flowgate.policy" &&
+      internalUpstream
+    ) {
+      if (suspended || !service) throw new Error("业务出口尚未就绪");
+      return service.call("egress.resolve", { target: internalUpstream });
+    }
     if (
       method !== "credential.resolve" ||
       payload?.reference !== "provider.mock"

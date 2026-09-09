@@ -568,4 +568,27 @@ export class ServiceCore {
     this.store.resume();
     this.lifecycle = "ready";
   }
+  async resolveEgress(target: string) {
+    const url = new URL(target);
+    if (
+      !["http:", "https:"].includes(url.protocol) ||
+      url.username ||
+      url.password
+    )
+      throw new Error("内部上游地址无效");
+    const kernel = await this.native.status();
+    if (
+      kernel.status !== "running" ||
+      kernel.appliedRevision !== this.store.configuration.revision ||
+      this.store.configuration.settings.mode === "tun" ||
+      this.hasUnknownNative()
+    )
+      throw new Error("所选代理策略尚未稳定应用，拒绝绕路访问上游");
+    return {
+      id: "flowgate.policy",
+      proxyUrl: `http://127.0.0.1:${this.store.configuration.settings.listenPort}`,
+      allowedOrigins: [url.origin],
+      configurationRevision: kernel.appliedRevision,
+    };
+  }
 }

@@ -36,8 +36,15 @@ test("helper availability cannot hide another application's system proxy ownersh
   const config = initialConfiguration();
   config.settings.mode = "system";
   const observed: NetworkState = {
-    interfaces: [], proxyEnabled: true, capturedAt: new Date().toISOString(),
-    defaultInterface: null, defaultGateway: null, dns: [], routes: [], warnings: [], plugins: [],
+    interfaces: [],
+    proxyEnabled: true,
+    capturedAt: new Date().toISOString(),
+    defaultInterface: null,
+    defaultGateway: null,
+    dns: [],
+    routes: [],
+    warnings: [],
+    plugins: [],
   };
   assert.ok(
     networkConflicts(config, observed, {

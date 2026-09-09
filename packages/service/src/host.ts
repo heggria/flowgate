@@ -112,7 +112,11 @@ port.on("message", async ({ data }: any) => {
     if (data.epoch !== epoch || data.session !== session) return;
     await ready;
     let result;
-    if (data.method === "power.suspend") {
+    if (data.method === "egress.resolve") {
+      const target = (data.payload as { target?: unknown })?.target;
+      if (typeof target !== "string") throw new Error("Missing egress target");
+      result = await core.resolveEgress(target);
+    } else if (data.method === "power.suspend") {
       core.suspend();
       result = { suspended: true };
     } else if (data.method === "power.resume") {

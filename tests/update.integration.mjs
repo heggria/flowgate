@@ -1,3 +1,4 @@
+import { egressFixture } from "./egress-fixture.mjs";
 import { _electron as electron } from "playwright";
 import { tufHandlers } from "@tufjs/repo-mock";
 import { fixtureRepository } from "./tuf-fixture.mjs";
@@ -26,6 +27,7 @@ for (const variant of process.env.FLOWGATE_UPDATE_VARIANTS?.split(",") ?? [
   "delayed-gateway",
   "delayed-renderer",
   "unresponsive-service",
+  "egress",
 ]) {
   const work = await mkdtemp(resolve("work/update-" + variant + "-"));
   const fixture = join(work, "app");
@@ -143,10 +145,12 @@ for (const variant of process.env.FLOWGATE_UPDATE_VARIANTS?.split(",") ?? [
       targetUrl: base + "/targets/",
     }),
   );
+  const realEgress = variant === "egress" ? await egressFixture() : undefined;
   const launchOptions = {
     args: [fixture],
     env: {
       ...process.env,
+      ...(realEgress ? { FLOWGATE_INTERNAL_UPSTREAM: realEgress.url } : {}),
       NODE_EXTRA_CA_CERTS: cert,
       FLOWGATE_TEST_DATA: join(work, "userdata"),
       FLOWGATE_INTERNAL_TEST: "1",
@@ -163,6 +167,40 @@ for (const variant of process.env.FLOWGATE_UPDATE_VARIANTS?.split(",") ?? [
     const before = await page.evaluate(() =>
       window.flowgate.request("snapshot"),
     );
+    if (realEgress) {
+      await page.evaluate(async (proxyPort) => {
+        await window.flowgate.request(
+          "subscription.import",
+          {
+            text: JSON.stringify({
+              outbounds: [
+                {
+                  type: "http",
+                  tag: "gateway-route",
+                  server: "127.0.0.1",
+                  server_port: proxyPort,
+                },
+              ],
+            }),
+          },
+          "egress-import",
+        );
+        const snapshot = await window.flowgate.request("snapshot");
+        await window.flowgate.request(
+          "configuration.save",
+          {
+            revision: snapshot.configuration.revision,
+            rules: [],
+            settings: {
+              ...snapshot.configuration.settings,
+              selectedNode: snapshot.configuration.nodes[0].id,
+              finalOutbound: "select",
+            },
+          },
+          "egress-select",
+        );
+      }, realEgress.proxyPort);
+    }
     await page.evaluate(() =>
       window.flowgate.request("proxy.connect", {}, crypto.randomUUID()),
     );
@@ -184,7 +222,13 @@ for (const variant of process.env.FLOWGATE_UPDATE_VARIANTS?.split(",") ?? [
         headers: { authorization: "Bearer internal-update-fixture" },
       },
     );
-    assert.equal(streamResponse.status, 200);
+    assert.equal(
+      streamResponse.status,
+      200,
+      JSON.stringify(
+        await page.evaluate(() => window.shell.request("gateway.status")),
+      ),
+    );
     let streamBytes = 0;
     const reading = (async () => {
       for await (const chunk of streamResponse.body)
@@ -334,7 +378,11 @@ for (const variant of process.env.FLOWGATE_UPDATE_VARIANTS?.split(",") ?? [
     if (variant === "ui") {
       assert.equal(after.epoch, before.epoch);
       assert.equal(status.current, id);
-    } else if (variant === "service" || variant === "apply") {
+    } else if (
+      variant === "service" ||
+      variant === "apply" ||
+      variant === "egress"
+    ) {
       assert.notEqual(after.epoch, before.epoch);
       assert.equal(status.current, id);
     } else {
@@ -365,7 +413,49 @@ for (const variant of process.env.FLOWGATE_UPDATE_VARIANTS?.split(",") ?? [
         "retry must not apply twice",
       );
     }
-    results.push({ variant, passed: true });
+    if (realEgress) {
+      assert.equal(
+        streamResponse.headers.get("x-egress-id"),
+        "flowgate.policy",
+      );
+      assert.equal(
+        Number(streamResponse.headers.get("x-config-revision")),
+        after.configuration.revision,
+      );
+      assert.equal(realEgress.metrics.proxyRequests, 1);
+      assert.equal(realEgress.metrics.upstreamRequests, 1);
+      const url = `http://127.0.0.1:${gatewayAfter.port}/v1/mock`;
+      const init = {
+        method: "POST",
+        headers: { authorization: "Bearer internal-update-fixture" },
+      };
+      const cancellation = await fetch(url, init);
+      const reader = cancellation.body.getReader();
+      await reader.read();
+      await reader.cancel();
+      for (let i = 0; i < 100 && realEgress.metrics.upstreamAborts === 0; i++)
+        await new Promise((r) => setTimeout(r, 20));
+      assert.equal(
+        realEgress.metrics.upstreamAborts,
+        1,
+        "client cancel must close the selected upstream path",
+      );
+      const beforeFailure = realEgress.metrics.upstreamRequests;
+      realEgress.metrics.online = false;
+      const failed = await fetch(url, init);
+      assert.equal(failed.status, 502);
+      await failed.text();
+      assert.equal(
+        realEgress.metrics.upstreamRequests,
+        beforeFailure,
+        "failed selected proxy must not fall back directly",
+      );
+    }
+    results.push({
+      variant,
+      passed: true,
+      ...(realEgress ? { egress: realEgress.metrics } : {}),
+    });
     await page.evaluate(() =>
       window.flowgate.request("proxy.disconnect", {}, crypto.randomUUID()),
     );
@@ -391,6 +481,7 @@ for (const variant of process.env.FLOWGATE_UPDATE_VARIANTS?.split(",") ?? [
   } finally {
     await app.close();
     await new Promise((r) => server.close(r));
+    await realEgress?.close();
   }
 }
 await writeFile(

@@ -76,7 +76,7 @@ export class CredentialScope {
 }
 async function write(
   response: ServerResponse,
-  value: string,
+  value: string | Uint8Array,
   signal: AbortSignal,
   observe: (buffered: number, waiting: boolean) => void = () => {},
 ) {
@@ -95,6 +95,7 @@ export class MockGateway implements ServiceLifecycle {
   cancelled = 0;
   maxBuffered = 0;
   backpressureWaits = 0;
+  lastFailure?: string;
   port = 0;
   constructor(
     readonly token: string,
@@ -102,6 +103,7 @@ export class MockGateway implements ServiceLifecycle {
     readonly configurationRevision = 1,
     readonly stressChunks = 0,
     readonly host?: CapabilityHost,
+    readonly upstream?: string,
   ) {}
   async prepare(signal: AbortSignal) {
     signal.throwIfAborted();
@@ -140,6 +142,7 @@ export class MockGateway implements ServiceLifecycle {
       }
       this.active.set(id, controller);
       let completed = false;
+      let reserved = false;
       res.on("close", () => {
         if (!completed) {
           this.cancelled++;
@@ -148,6 +151,30 @@ export class MockGateway implements ServiceLifecycle {
       });
       try {
         this.ledger.reserve(id, 10);
+        reserved = true;
+        if (this.upstream) {
+          if (!this.host)
+            throw new Error("Upstream requires scoped host egress");
+          const response = await this.host.requestEgress(
+            this.egress.id,
+            this.upstream,
+            controller.signal,
+          );
+          res.writeHead(response.statusCode ?? 502, {
+            "content-type":
+              response.headers["content-type"] ?? "application/octet-stream",
+            "x-config-revision": String(response.egress.configurationRevision),
+            "x-egress-id": response.egress.id,
+          });
+          for await (const chunk of response)
+            await write(res, chunk, controller.signal, (buffered, waiting) => {
+              this.maxBuffered = Math.max(this.maxBuffered, buffered);
+              if (waiting) this.backpressureWaits++;
+            });
+          completed = true;
+          res.end();
+          return;
+        }
         res.writeHead(200, {
           "content-type": "text/event-stream",
           "x-config-revision": String(this.configurationRevision),
@@ -193,8 +220,13 @@ export class MockGateway implements ServiceLifecycle {
         }
         completed = true;
         res.end();
-      } catch {
-        if (!res.headersSent) res.writeHead(429);
+      } catch (error) {
+        this.lastFailure =
+          error instanceof Error
+            ? error.message.slice(0, 300)
+            : "Gateway request failed";
+        if (!res.headersSent)
+          res.writeHead(reserved && this.upstream ? 502 : 429);
         res.end();
       } finally {
         if (

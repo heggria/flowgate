@@ -275,7 +275,12 @@ export class CapabilityHost {
     const route = structuredClone(await this.resolveEgress(id));
     this.require("egress");
     if (route.id !== id) throw new Error("Egress resolution mismatch");
-    return requestHttpEgress(route, target, signal);
+    return Object.assign(await requestHttpEgress(route, target, signal), {
+      egress: Object.freeze({
+        id: route.id,
+        configurationRevision: route.configurationRevision,
+      }),
+    });
   }
   async drain(deadline: number) {
     this.draining = true;
