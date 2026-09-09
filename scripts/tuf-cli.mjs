@@ -117,7 +117,10 @@ if (command === "init") {
       ),
     );
   } else {
-    let signers = await load(keyDirectory),
+    let signers = await load(
+        keyDirectory,
+        command === "rotate" ? roles : ["targets", "snapshot", "timestamp"],
+      ),
       rootUpdate;
     let change;
     if (command === "publish") {
