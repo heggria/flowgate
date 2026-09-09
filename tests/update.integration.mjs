@@ -147,6 +147,22 @@ for (const variant of process.env.FLOWGATE_UPDATE_VARIANTS?.split(",") ?? [
     },
   });
   try {
+    // Trust only this isolated HTTPS fixture's certificate in Chromium networking.
+    await app.evaluate(
+      ({ session }, pem) => {
+        session.defaultSession.setCertificateVerifyProc(
+          ({ hostname, certificate }, done) => {
+            done(
+              hostname === "localhost" &&
+                certificate.data.replace(/\s/g, "") === pem.replace(/\s/g, "")
+                ? 0
+                : -3,
+            );
+          },
+        );
+      },
+      await readFile(cert, "utf8"),
+    );
     const page = await app.firstWindow();
     await page
       .getByRole("heading", { name: "概览" })

@@ -1,1 +1,7 @@
-{"enabled":false,"metadataUrl":"","targetUrl":"","applicationFeed":"","note":"Official HTTPS URLs and the trusted TUF root are injected into the signed shell at release time."}
+{
+  "enabled": true,
+  "metadataUrl": "https://raw.githubusercontent.com/heggria/flowgate/updates/metadata/",
+  "targetUrl": "https://raw.githubusercontent.com/heggria/flowgate/updates/targets/",
+  "applicationFeed": "",
+  "note": "Business Release Sets use independently signed TUF metadata. Full application updates and Apple signing remain deferred."
+}
