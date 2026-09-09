@@ -1,0 +1,2 @@
+window.shell.request('recovery.status').then(s=>document.getElementById('message').textContent=s.message);
+document.getElementById('disconnect').onclick=async()=>{try{await window.shell.request('recovery.disconnect');document.getElementById('result').textContent='已请求清理本应用连接。';}catch(e){document.getElementById('result').textContent=e.message}};document.getElementById('restore').onclick=()=>window.shell.request('recovery.restore');

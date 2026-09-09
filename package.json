@@ -1,0 +1,52 @@
+{
+  "name": "flowgate",
+  "version": "0.2.0",
+  "private": true,
+  "description": "FlowGate modular proxy workspace",
+  "main": "dist/main.cjs",
+  "scripts": {
+    "build": "node build.mjs",
+    "start": "npm run build && electron .",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts",
+    "test:e2e": "npm run build && node tests/e2e.mjs",
+    "check:boundaries": "node scripts/check-boundaries.mjs",
+    "test:native": "npm run build && tsx tests/native.integration.ts",
+    "test:gateway": "npm run build && tsx tests/gateway.integration.ts",
+    "test:updates": "npm run build && node tests/update.integration.mjs",
+    "package:mac": "node scripts/package-macos.mjs",
+    "verify": "npm run typecheck && npm run check:boundaries && npm test && npm run build && node tests/e2e.mjs && tsx tests/native.integration.ts && tsx tests/protocols.integration.ts && tsx tests/native-faults.integration.ts && node tests/ownership.integration.mjs && tsx tests/gateway.integration.ts && node tests/update.integration.mjs && node tests/credentials.integration.mjs && node tests/cancellation.integration.mjs && node tests/features.integration.mjs && node tests/drafts.integration.mjs && node tests/ui.integration.mjs",
+    "test:ui": "npm run build && node tests/ui.integration.mjs",
+    "setup:kernel": "node scripts/fetch-kernel.mjs"
+  },
+  "devDependencies": {
+    "@electron/notarize": "^3.1.1",
+    "@electron/osx-sign": "^2.7.0",
+    "@tufjs/repo-mock": "5.0.0",
+    "@types/node": "^26.5.0",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.7",
+    "electron": "44.3.0",
+    "esbuild": "^0.28.2",
+    "playwright": "^1.63.0",
+    "prettier": "3.9.6",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "1.14.4",
+    "@grpc/proto-loader": "0.8.1",
+    "@tufjs/models": "5.0.0",
+    "https-proxy-agent": "9.1.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "socks-proxy-agent": "10.1.0",
+    "tuf-js": "6.0.0",
+    "yaml": "2.9.0"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "type": "module",
+  "license": "GPL-3.0-or-later"
+}

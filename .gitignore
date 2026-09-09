@@ -1,0 +1,20 @@
+node_modules/
+dist/
+work/
+.DS_Store
+*.log
+dist-app/
+vendor/sing-box
+
+# Local credentials, signing material and editor settings
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.mobileprovision
+*.provisionprofile
+.vscode/
+.idea/
