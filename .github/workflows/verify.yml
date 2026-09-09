@@ -9,24 +9,81 @@ concurrency:
   group: verify-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  static:
+    name: Static checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: node scripts/check-boundaries.mjs
+      - run: node --test tests/infrastructure.test.mjs
+      - name: Check changed-file formatting
+        env:
+          EVENT_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          base="$EVENT_BASE"
+          if [[ -z "$base" || "$base" == "0000000000000000000000000000000000000000" ]]; then
+            base="$(git rev-parse HEAD^)"
+          fi
+          node scripts/check-format.mjs "$base"
+      - run: node scripts/audit-dependencies.mjs
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: dependency-audit
+          path: work/dependency-audit.json
+          if-no-files-found: ignore
+          retention-days: 14
   verify:
+    name: macOS verification
     runs-on: macos-15
     timeout-minutes: 25
+    env:
+      FLOWGATE_PACKAGE_DIR: ${{ github.workspace }}/work/package/FlowGate.app
+      FLOWGATE_BUILD_NUMBER: ${{ github.run_number }}
+      FLOWGATE_TEST_VISIBLE: "0"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: '24.19.0'
+          node-version-file: .node-version
           cache: npm
       - run: npm ci
       - run: node scripts/fetch-kernel.mjs
       - run: npm run verify
+      - run: node tests/background.integration.mjs
+      - name: Package the verified build
+        run: node scripts/package-macos.mjs
+      - name: Verify the packaged application in the background
+        run: node tests/package.integration.mjs
+      - name: Archive development artifacts
+        run: |
+          node scripts/archive-package.mjs
+          git archive --format=tar.gz --output=work/artifacts/FlowGate-source.tar.gz HEAD
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: development-package
+          path: work/artifacts/*
+          if-no-files-found: error
+          retention-days: 14
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
           name: verification-results
           path: |
             work/*-result.json
-            work/ui-*.png
-            work/extensions-*.png
+            work/*.png
+            work/traces/*
+            work/diagnostics/*
           if-no-files-found: ignore
+          retention-days: 14

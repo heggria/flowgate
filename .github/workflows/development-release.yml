@@ -1,0 +1,47 @@
+name: Publish verified development build
+on:
+  workflow_run:
+    workflows: [Verify FlowGate]
+    types: [completed]
+permissions:
+  contents: read
+concurrency:
+  group: development-release-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+jobs:
+  publish:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RUN_ID: ${{ github.event.workflow_run.id }}
+      COMMIT: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Download artifacts from the successful trusted main run
+        run: gh run download "$RUN_ID" --name development-package --dir artifacts
+      - name: Verify archive and publish an immutable prerelease
+        run: |
+          cd artifacts
+          sha256sum --check SHA256SUMS
+          tag="dev-${COMMIT:0:12}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release already exists; immutable assets will not be overwritten."
+            exit 0
+          fi
+          cat > /tmp/flowgate-release-notes.md <<EOF_NOTES
+          Development build from commit $COMMIT.
+          Verified by GitHub Actions run $RUN_ID, including the packaged-app smoke test.
+          macOS Apple Silicon only. This build is not Developer ID signed or notarized.
+          Use manual HTTP/SOCKS mode; privileged helper/TUN acceptance remains deferred.
+          FlowGate source, build provenance and SHA-256 checksum are included.
+          EOF_NOTES
+          gh release create "$tag" ./* --target "$COMMIT" --title "FlowGate development ${COMMIT:0:12}" --prerelease --latest=false --notes-file /tmp/flowgate-release-notes.md

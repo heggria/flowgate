@@ -5,4 +5,5 @@ Stable shell imports contracts and release verification, never business implemen
 ## Checks
 npm run typecheck; npm test; npm run build; npm run test:e2e. Tests use isolated data and never change global routes/DNS/proxy settings. Real packet forwarding is a separate acceptance check. Never claim simulated connectivity as actual.
 ## Safety and continuity
+All isolated Electron tests (FLOWGATE_TEST_DATA) run hidden and non-focusable by default. Never use native UI activation for automated tests. FLOWGATE_TEST_VISIBLE=1 is an explicit manual debugging opt-in only; do not set it during routine verification. Preserve this behavior for window recreation, reloads and recovery.
 Preserve external network settings with ownership-aware recovery. No subscription secrets in logs. Keep evidence in ignored work/. Update work/STATE.md after milestones. Do not overwrite unrelated local changes.

@@ -1,0 +1,8 @@
+node_modules/
+dist/
+dist-app/
+work/
+vendor/
+package-lock.json
+LICENSE
+licenses/
