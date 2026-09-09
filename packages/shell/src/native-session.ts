@@ -46,6 +46,9 @@ export class NativeSession implements NativePort {
     });
     child.stderr.on("data", () => {});
     const failed = () => {
+      if (this.process !== child) return;
+      this.process = undefined;
+      child.kill();
       this.state = {
         status: "unknown",
         systemControl: false,
@@ -58,8 +61,8 @@ export class NativeSession implements NativePort {
         );
       }
       this.pending.clear();
-      this.process = undefined;
     };
+    child.stdin.on("error", failed);
     child.on("error", failed);
     child.on("exit", failed);
     try {
@@ -118,7 +121,7 @@ export class NativeSession implements NativePort {
   async close() {
     if (this.process) {
       await this.stop(randomUUID());
-      this.process.stdin.end();
+      this.process?.stdin.end();
     }
   }
 }
