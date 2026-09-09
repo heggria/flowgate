@@ -1,3 +1,4 @@
+import serviceCatalog from "../../contracts/src/service-catalog.json";
 import { requestTrace } from "../../runtime/src/trace-context";
 import { RequestScope } from "../../runtime/src/request-scope";
 import { randomUUID } from "node:crypto";
@@ -63,6 +64,25 @@ function capability(
     });
   });
 }
+if (process.env.FLOWGATE_EXPECTED_SERVICE_MODULES) {
+  const expected = JSON.parse(process.env.FLOWGATE_EXPECTED_SERVICE_MODULES);
+  if (
+    serviceCatalog.some((entry) => {
+      const declared = expected.find(
+        (item: { id: string }) => item.id === entry.id,
+      );
+      return (
+        declared?.version !== entry.version ||
+        ["permissions", "capabilities", "contributions"].some(
+          (key) =>
+            JSON.stringify([...(declared?.[key] ?? [])].sort()) !==
+            JSON.stringify([...entry[key as "permissions"]].sort()),
+        )
+      );
+    })
+  )
+    throw new Error("运行 Service 模块与受信清单不一致");
+}
 const core = new ServiceCore(
   new StateStore(process.env.FLOWGATE_DATA!, epoch),
   {
@@ -78,12 +98,15 @@ const core = new ServiceCore(
   new KernelTelemetry(),
   process.env.FLOWGATE_HOST_VERSION,
 );
+core.native.modules.trace.onChange = () =>
+  port.postMessage({
+    type: "trace",
+    epoch,
+    session,
+    event: core.native.modules.trace.snapshot().at(-1),
+  });
 const ready =
-  process.env.FLOWGATE_PREFLIGHT === "1"
-    ? core.store.start(true).then(() => {
-        core.lifecycle = "ready";
-      })
-    : core.start();
+  process.env.FLOWGATE_PREFLIGHT === "1" ? core.preflight() : core.start();
 ready.catch(() => {});
 const requests = new RequestScope();
 port.on("message", async ({ data }: any) => {

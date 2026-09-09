@@ -42,7 +42,7 @@ export class TraceBuffer {
   }
 }
 export interface Contribution {
-  owner?: { id: string; version: string };
+  owner?: { id: string; version: string; instance?: string };
   id: string;
   kind: "route" | "command" | "settings" | "detailPanel";
   value: unknown;
@@ -60,10 +60,14 @@ export class ModuleRuntime {
     module: RuntimeModule;
     controller: AbortController;
     disposers: (() => void | Promise<void>)[];
+    identity: Partial<TraceContext>;
   }[] = [];
   private contributions = new Map<string, Contribution>();
   status: Lifecycle = "stopped";
-  constructor(readonly trace = new TraceBuffer()) {}
+  constructor(
+    readonly trace = new TraceBuffer(),
+    private readonly context: () => Partial<TraceContext> = () => ({}),
+  ) {}
   get entries() {
     return [...this.contributions.values()];
   }
@@ -99,10 +103,15 @@ export class ModuleRuntime {
           module,
           controller: new AbortController(),
           disposers: [] as (() => void | Promise<void>)[],
+          identity: {
+            pluginInstance: module.manifest.id + ":" + crypto.randomUUID(),
+            moduleVersions: { [module.manifest.id]: module.manifest.version },
+          },
         };
         this.active.push(entry);
         this.trace.emit(module.manifest.id, "starting", {
-          moduleVersions: { [module.manifest.id]: module.manifest.version },
+          ...this.context(),
+          ...entry.identity,
         });
         await module.activate({
           signal: entry.controller.signal,
@@ -113,13 +122,15 @@ export class ModuleRuntime {
               owner: {
                 id: module.manifest.id,
                 version: module.manifest.version,
+                instance: entry.identity.pluginInstance,
               },
             });
           },
           defer: (d) => entry.disposers.push(d),
         });
         this.trace.emit(module.manifest.id, "ready", {
-          moduleVersions: { [module.manifest.id]: module.manifest.version },
+          ...this.context(),
+          ...entry.identity,
         });
       }
       this.contributions = staged;
@@ -134,16 +145,26 @@ export class ModuleRuntime {
     this.status = "draining";
     const failures: unknown[] = [];
     for (const entry of this.active.reverse()) {
+      this.trace.emit(entry.module.manifest.id, "draining", {
+        ...this.context(),
+        ...entry.identity,
+      });
       entry.controller.abort();
       for (const dispose of entry.disposers.reverse()) {
         try {
           await dispose();
         } catch (error) {
           failures.push(error);
-          this.trace.emit(entry.module.manifest.id, "release-failed");
+          this.trace.emit(entry.module.manifest.id, "release-failed", {
+            ...this.context(),
+            ...entry.identity,
+          });
         }
       }
-      this.trace.emit(entry.module.manifest.id, "stopped");
+      this.trace.emit(entry.module.manifest.id, "stopped", {
+        ...this.context(),
+        ...entry.identity,
+      });
     }
     this.active = [];
     this.contributions.clear();

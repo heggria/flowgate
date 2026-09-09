@@ -1,3 +1,4 @@
+import serviceCatalog from "../../contracts/src/service-catalog.json";
 import { createHash } from "node:crypto";
 import { lstat, readFile, readdir, realpath } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
@@ -76,6 +77,7 @@ export function validateRelease(manifest: ReleaseSet) {
     if (!manifest.files[entry]) throw new Error("入口未声明");
   const allowed = new Set([
     ...builtinExtensions.map((entry) => entry.id),
+    ...serviceCatalog.map((entry) => entry.id),
     "internal.gateway-test",
   ]);
   if (manifest.catalogVersion !== undefined && manifest.catalogVersion !== 1)
@@ -83,7 +85,7 @@ export function validateRelease(manifest: ReleaseSet) {
   if (
     manifest.catalogVersion === 1 &&
     (!Array.isArray(manifest.builtins) ||
-      builtinExtensions.some(
+      [...builtinExtensions, ...serviceCatalog].some(
         (entry) => !manifest.builtins.some((item) => item.id === entry.id),
       ))
   )
@@ -103,7 +105,7 @@ export function validateRelease(manifest: ReleaseSet) {
     )
       throw new Error("内置模块版本无效");
     builtins.add(builtin.id);
-    const descriptor = builtinExtensions.find(
+    const descriptor = [...builtinExtensions, ...serviceCatalog].find(
       (entry) => entry.id === builtin.id,
     );
     if (

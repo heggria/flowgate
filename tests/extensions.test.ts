@@ -1,3 +1,4 @@
+import serviceCatalog from "../packages/contracts/src/service-catalog.json";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp } from "node:fs/promises";
@@ -308,7 +309,7 @@ test("catalog permissions cannot escalate through a dynamic release and new cata
   m.builtins = [];
   m.catalogVersion = 1;
   assert.throws(() => validateRelease(m), /不完整/);
-  m.builtins = builtinExtensions.map(
+  m.builtins = [...builtinExtensions, ...serviceCatalog].map(
     ({ id, version, permissions, capabilities, contributions }) => ({
       id,
       version,

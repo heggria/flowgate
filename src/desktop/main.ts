@@ -232,6 +232,8 @@ async function startHosts(directory: string, manifest?: ReleaseSet) {
       FLOWGATE_DATA: business,
       FLOWGATE_RELEASE: manifest?.id ?? "bundled",
       FLOWGATE_HOST_VERSION: manifest?.components?.service ?? app.getVersion(),
+      FLOWGATE_EXPECTED_SERVICE_MODULES:
+        manifest?.catalogVersion === 1 ? JSON.stringify(manifest.builtins) : "",
     },
   );
   attachCapabilities(service);
@@ -397,6 +399,10 @@ else {
                 FLOWGATE_DATA: join(data, "business"),
                 FLOWGATE_RELEASE: manifest.id,
                 FLOWGATE_PREFLIGHT: "1",
+                FLOWGATE_EXPECTED_SERVICE_MODULES:
+                  manifest.catalogVersion === 1
+                    ? JSON.stringify(manifest.builtins)
+                    : "",
               },
             );
             attachCapabilities(host, true);

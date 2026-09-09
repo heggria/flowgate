@@ -50,9 +50,14 @@ const manifest = {
   extension: "extension.cjs",
   catalogVersion: 1,
   builtins: [
-    ...JSON.parse(
-      await readFile("packages/contracts/src/builtin-catalog.json", "utf8"),
-    ).map(({ id, version, capabilities, permissions, contributions }) => ({
+    ...[
+      ...JSON.parse(
+        await readFile("packages/contracts/src/builtin-catalog.json", "utf8"),
+      ),
+      ...JSON.parse(
+        await readFile("packages/contracts/src/service-catalog.json", "utf8"),
+      ),
+    ].map(({ id, version, capabilities, permissions, contributions }) => ({
       id,
       version,
       capabilities,

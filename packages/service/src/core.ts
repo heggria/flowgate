@@ -1,3 +1,5 @@
+import type { RuntimeModule } from "../../runtime/src/lifecycle";
+import { KernelRuntime, singBoxAdapter } from "./kernel/adapter";
 import { networkPath } from "../../domain/src/network-path";
 import { requestTrace } from "../../runtime/src/trace-context";
 import { measureOutbound, type NodeMeasurement } from "./kernel/measurement";
@@ -17,7 +19,6 @@ import type {
   RuleSource,
 } from "../../contracts/src/index";
 import {
-  compileConfiguration,
   explainRoute,
   validateConfiguration,
 } from "../../domain/src/configuration";
@@ -92,6 +93,7 @@ export class ServiceCore {
       await this.readExtensions();
     });
   }
+  readonly native: KernelRuntime;
   private readonly networkObserver: NetworkObserver;
   lifecycle: AppSnapshot["lifecycle"] = "starting";
   network: NetworkState | null = null;
@@ -101,7 +103,7 @@ export class ServiceCore {
   private moduleInfo: AppSnapshot["modules"] = [];
   constructor(
     readonly store: StateStore,
-    readonly native: NativePort,
+    native: NativePort,
     readonly extension: (
       method: string,
       payload?: unknown,
@@ -110,7 +112,22 @@ export class ServiceCore {
     readonly releaseSet: string,
     readonly telemetry?: KernelTelemetry,
     readonly version = BUILD_VERSION,
+    adapterFactory: (native: NativePort) => RuntimeModule = singBoxAdapter,
   ) {
+    const bootstrapTrace = randomUUID().replaceAll("-", "");
+    this.native = new KernelRuntime(adapterFactory(native), () => ({
+      operationId: "service-" + store.epoch,
+      traceId: bootstrapTrace,
+      ...requestTrace.getStore(),
+      releaseSet,
+      serviceVersion: version,
+      epoch: store.epoch,
+      configRevision: store.configuration.revision,
+      shellVersion: BUILD_VERSION,
+      hostVersion: version,
+      protocolVersion: 1,
+      schemaVersion: 1,
+    }));
     this.networkObserver = new NetworkObserver(
       async () => (await this.extension("network.inspect")) as NetworkState,
       (state) => {
@@ -177,6 +194,12 @@ export class ServiceCore {
   }
   async start() {
     await this.store.start();
+    try {
+      await this.native.start();
+    } catch (error) {
+      await this.store.close();
+      throw error;
+    }
     await readHandoff(this.store.directory, this.store.configuration.revision);
     const kernel = await this.native.status();
     await this.reconcileNative(kernel);
@@ -269,7 +292,7 @@ export class ServiceCore {
       operations: this.store.operations.slice(-30).reverse(),
       network: this.network,
       nodeMeasurements: [...this.measurements.values()],
-      modules: this.moduleInfo,
+      modules: [...(this.moduleInfo ?? []), this.native.snapshot()],
       serviceVersion: this.version,
     };
   }
@@ -483,7 +506,7 @@ export class ServiceCore {
               throw new Error(blocked.map((c) => c.message).join("\n"));
           }
           await this.native.apply(
-            compileConfiguration(this.store.configuration),
+            await this.native.compile(this.store.configuration),
             this.store.configuration.revision,
             operationId,
             this.store.configuration.settings.mode,
@@ -726,6 +749,12 @@ export class ServiceCore {
       }
     });
   }
+  async preflight() {
+    await this.store.start(true);
+    await this.native.start();
+    await this.native.compile(this.store.configuration);
+    this.lifecycle = "ready";
+  }
   async drain() {
     this.lifecycle = "draining";
     this.networkObserver.stop();
@@ -739,10 +768,12 @@ export class ServiceCore {
         });
     } catch (error) {
       this.store.resume();
+      this.native.resume();
       this.lifecycle = "ready";
       this.networkObserver.resume();
       throw error;
     }
+    await this.native.drain(Date.now() + 5000);
     await writeHandoff(this.store.directory, {
       version: 1,
       protocol: 1,
@@ -763,6 +794,7 @@ export class ServiceCore {
     await this.drain();
     this.telemetry?.close();
     await this.store.close();
+    await this.native.dispose();
     this.lifecycle = "stopped";
   }
   suspend() {
@@ -777,6 +809,7 @@ export class ServiceCore {
     this.networkObserver.resume();
     await this.networkObserver.refresh().catch(() => {});
     this.store.resume();
+    this.native.resume();
     this.lifecycle = "ready";
   }
   async resolveEgress(target: string) {
