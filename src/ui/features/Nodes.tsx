@@ -1,3 +1,4 @@
+import { SearchField, EmptyState } from "../components";
 import { useState, useEffect, useRef } from "react";
 import type {
   Configuration,
@@ -62,7 +63,7 @@ function NodeEditor({
             autoFocus
             data-autofocus="true"
             required
-            maxLength={100}
+            maxLength={200}
             value={value.name}
             onChange={(e) => draft.change({ ...value, name: e.target.value })}
           />
@@ -347,20 +348,13 @@ export function Nodes({
           <div className="sectioncaption">
             全部节点 <span className="count">{config.nodes.length}</span>
           </div>
-          <div className="searchfield">
-            <Icon name="search" size={15} />
-            <input
-              aria-label="搜索节点"
-              placeholder="搜索名称、地址或协议"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-            {query ? (
-              <button aria-label="清空节点搜索" onClick={() => setQuery("")}>
-                <Icon name="close" size={13} />
-              </button>
-            ) : null}
-          </div>
+          <SearchField
+            label="搜索节点"
+            placeholder="搜索名称、地址或协议"
+            value={query}
+            onChange={setQuery}
+            clearLabel="清空节点搜索"
+          />
         </div>
         {filtered.length ? (
           <div className="resourcelist">
@@ -447,18 +441,17 @@ export function Nodes({
             ))}
           </div>
         ) : (
-          <div className="empty emptystate resourceempty">
-            <span className="emptyglyph">
-              <Icon name="nodes" size={23} />
-            </span>
-            <strong>
-              {config.nodes.length ? "没有匹配的节点" : "添加你的第一个节点"}
-            </strong>
-            <p>
-              {config.nodes.length
+          <EmptyState
+            title={
+              config.nodes.length ? "没有匹配的节点" : "添加你的第一个节点"
+            }
+            description={
+              config.nodes.length
                 ? "尝试节点名称、服务器地址或协议。"
-                : "导入订阅或节点配置，然后选择一个出口开始连接。"}
-            </p>
+                : "导入订阅或节点配置，然后选择一个出口开始连接。"
+            }
+            icon="nodes"
+          >
             <button
               className="secondary"
               onClick={() =>
@@ -467,7 +460,7 @@ export function Nodes({
             >
               {config.nodes.length ? "清除搜索" : "导入代理资源"}
             </button>
-          </div>
+          </EmptyState>
         )}
       </section>
       <section className="resourcesection subscriptions">

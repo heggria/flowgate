@@ -1,4 +1,4 @@
-import { Combobox, outletChoices } from "../components";
+import { Combobox, outletChoices, PageHeader } from "../components";
 import type { FeatureProps } from "../modules";
 import { mutation } from "../../../packages/client/src/index";
 import { Traffic } from "./Traffic";
@@ -71,16 +71,12 @@ export function Overview({
         (id === "direct" ? "直连" : id === "proxy" ? "代理" : id));
   return (
     <>
-      <div className="pageheading">
-        <div>
-          <h1>概览</h1>
-          <span className="subtle">本机代理</span>
-        </div>
+      <PageHeader title="概览" description="本机代理与实时流量。">
         <span className="livecaption">
           <i className={available ? "dot online" : "dot"} />
           {available ? "实时更新" : connected ? "连接遥测中" : "尚未启动"}
         </span>
-      </div>
+      </PageHeader>
       {!c.nodes.length && !c.externalNetworks?.length && !connected ? (
         <section className="setupcard" aria-label="开始使用">
           <div className="setupicon">
@@ -264,7 +260,10 @@ export function Overview({
       </div>
       {snapshot.kernel.status === "failed" ||
       snapshot.kernel.status === "unknown" ? (
-        <div className="alert" role="alert">
+        <div
+          className={`alert ${snapshot.kernel.status === "failed" ? "alert-error" : ""}`}
+          role="alert"
+        >
           {snapshot.kernel.message ?? "代理状态异常，请查看操作记录"}
           <button onClick={() => navigate("activity")}>查看记录</button>
         </div>

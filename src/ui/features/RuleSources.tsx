@@ -124,16 +124,16 @@ export function RuleSources({ snapshot, run, busy }: FeatureProps) {
               />
             </Field>
             <Field id="ruleset-format" label="格式">
-              <select
+              <Combobox
                 id="ruleset-format"
+                label="格式"
                 value={draft.value.format}
-                onChange={(event) =>
-                  draft.change({ format: event.target.value })
-                }
-              >
-                <option value="domain-list">域名列表</option>
-                <option value="sing-box-json">sing-box JSON</option>
-              </select>
+                options={[
+                  { value: "domain-list", label: "域名列表" },
+                  { value: "sing-box-json", label: "sing-box JSON" },
+                ]}
+                onChange={(format) => draft.change({ format })}
+              />
             </Field>
             <Field id="ruleset-outlet" label="规则出口">
               <Combobox
