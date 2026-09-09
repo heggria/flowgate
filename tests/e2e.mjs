@@ -49,8 +49,8 @@ try {
   await openRuleEditor(page);
   await page.getByRole("textbox", { name: "匹配内容" }).fill("example.com");
   await page.getByRole("button", { name: "添加规则", exact: true }).click();
-  await page.getByText("example.com", { exact: true }).waitFor();
   await page.getByRole("dialog").waitFor({ state: "hidden" });
+  await page.getByText("example.com", { exact: true }).waitFor();
 
   await page.getByRole("textbox", { name: "目标域名" }).fill("www.example.com");
   await page.getByRole("button", { name: "检查路径" }).click();
