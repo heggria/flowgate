@@ -30,7 +30,7 @@
 
 工程流水线包含静态检查、依赖审计、macOS 全套验证、原子构建、来源/哈希清单、独立安装包后台真实请求，以及成功主分支构建的开发预发布。主分支要求 PR 与两项远程检查通过。开发包为 ad-hoc 签名，不等于 Developer ID 签名、公证或可用于特权模式的正式发行。
 
-业务更新使用独立 TUF 角色和实际 HTTPS 源；最终发布状态、源码提交与真实应用激活记录需与 RELEASING 对齐。历史版本的成功不能代替最终整合包的验证。
+业务更新使用独立 TUF 角色和实际 [HTTPS 仓库](https://github.com/heggria/flowgate/tree/updates)，[发布配置 PR #4](https://github.com/heggria/flowgate/pull/4) 已通过远程检查并合并。初始历史版本的隐藏应用下载、签名验证、激活、真实转发及重启验收通过。操作程序见 BUSINESS_UPDATES.md；最终整合源码的检查见 [PR #5](https://github.com/heggria/flowgate/pull/5)。正式交付还须发布该整合代码对应的新业务版本，历史版本的成功不能代替最终包验证。
 
 ## 尚未通过的真机项目
 
@@ -51,3 +51,5 @@ Developer ID 同团队签名、公证、正式 helper 注册与管理员批准�
 后台不抢焦点检查见 `work/combined-background.log`；实际安装包身份、签名一致性与真实转发见 `work/combined-package.log`，该包仍是 feed 整合前的开发包。最终源码与分发包需要对应新的 CI 和安装包验证记录。
 
 真实外网修复前后记录为 `work/external-network.log`、`work/external-network-no-bind.log`、`work/external-network-fixed.log`；外部 IPv6 失败保留在 `work/external-ipv6.log`。失败证据未删除。
+
+短时持续检查 `work/sustained-result.json`：252 秒内完成 120 个本地请求与 6 个外部 HTTPS 请求，内核 PID 和 Service 代次保持不变，窗口始终隐藏；这不等于日常时长或真实睡眠验收。远程首次慢环境发现规则弹窗关闭前的重复文本定位，测试改为先等待关闭再检查保存内容，`work/e2e-dialog-recheck.log` 复验通过。
