@@ -50,6 +50,7 @@ test("publisher CLI, online-only renewal and full key rotation work with the rea
       ui: "entry.js",
       service: "entry.js",
       extension: "entry.js",
+      catalogVersion: 1,
       builtins: [],
       files: {
         "entry.js": {

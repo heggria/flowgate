@@ -55,6 +55,7 @@ async function fixture() {
     ui: "entry.js",
     service: "entry.js",
     extension: "entry.js",
+    catalogVersion: 1,
     builtins: [],
     files: {
       "entry.js": {
@@ -92,6 +93,36 @@ test("publisher separates roles, publishes immutable targets, promotes, renews, 
     );
     assert.throws(() => validateRelease(f.manifest), /平台/);
     assert.doesNotThrow(() => validateReleaseManifest(f.manifest));
+    assert.throws(
+      () =>
+        validateRelease({
+          ...f.manifest,
+          platforms: [process.platform + "-" + process.arch],
+        }),
+      /目录不完整/,
+    );
+    const future = JSON.parse(
+      JSON.stringify({
+        ...f.manifest,
+        protocol: 2,
+        shellApi: { min: 2, max: 3 },
+        schema: { min: 2, max: 2 },
+        catalogVersion: 2,
+      }),
+    );
+    assert.doesNotThrow(() => validateReleaseManifest(future));
+    assert.throws(() => validateRelease(future), /不兼容/);
+    assert.throws(
+      () =>
+        validateReleaseManifest({
+          ...f.manifest,
+          builtins: [
+            { id: "legacy", version: "1", permissions: ["unsafe whitespace"] },
+          ],
+        }),
+      /能力声明/,
+    );
+
     assert.throws(
       () => validateReleaseManifest({ ...f.manifest, platforms: [] }),
       /平台/,
