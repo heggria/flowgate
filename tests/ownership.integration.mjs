@@ -13,6 +13,11 @@ execFileSync(
   { stdio: "inherit" },
 );
 execFileSync(join(work, "test"), [join(work, "data")], { stdio: "inherit" });
+execFileSync("/usr/bin/swiftc", [
+  "native/SessionLease.swift", "tests/SessionLeaseTests.swift",
+  "-o", join(work, "session-test"),
+], { stdio: "inherit" });
+execFileSync(join(work, "session-test"), [], { stdio: "inherit" });
 await writeFile(
   "work/ownership-result.json",
   JSON.stringify(
@@ -27,6 +32,8 @@ await writeFile(
         "commit failure retry",
         "durable recovery after journal reload",
         "missing service retry",
+        "old session retries cannot stop new resources",
+        "failed cleanup fences new session admission",
       ],
     },
     null,

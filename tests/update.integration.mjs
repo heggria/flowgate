@@ -21,6 +21,10 @@ for (const variant of process.env.FLOWGATE_UPDATE_VARIANTS?.split(",") ?? [
   "service",
   "rollback",
   "apply",
+  "delayed-service",
+  "delayed-extension",
+  "delayed-gateway",
+  "delayed-renderer",
 ]) {
   const work = await mkdtemp(resolve("work/update-" + variant + "-"));
   const fixture = join(work, "app");
@@ -35,12 +39,23 @@ for (const variant of process.env.FLOWGATE_UPDATE_VARIANTS?.split(",") ?? [
   const id = "test-" + variant + "-2";
   for (const name of await readdir("dist/release")) {
     let bytes = await readFile(join("dist/release", name));
-    if (name === (variant === "ui" ? "app.js" : "service.cjs"))
+    if (
+      name ===
+      (variant === "ui" || variant === "delayed-renderer"
+        ? "app.js"
+        : variant === "delayed-extension"
+          ? "extension.cjs"
+          : variant === "delayed-gateway"
+            ? "gateway.cjs"
+            : "service.cjs")
+    )
       bytes = Buffer.concat([
         Buffer.from(
           variant === "rollback"
             ? "if(process.env.FLOWGATE_PREFLIGHT!=='1')throw new Error('Injected startup failure');\n"
-            : "// independent update fixture\n",
+            : variant.startsWith("delayed-") && variant !== "delayed-renderer"
+              ? "if(process.env.FLOWGATE_PREFLIGHT!=='1')setTimeout(()=>process.exit(17),4000);\n"
+              : "// independent update fixture\n",
         ),
         bytes,
       ]);
@@ -125,7 +140,7 @@ for (const variant of process.env.FLOWGATE_UPDATE_VARIANTS?.split(",") ?? [
       targetUrl: base + "/targets/",
     }),
   );
-  const app = await electron.launch({
+  const launchOptions = {
     args: [fixture],
     env: {
       ...process.env,
@@ -135,9 +150,10 @@ for (const variant of process.env.FLOWGATE_UPDATE_VARIANTS?.split(",") ?? [
       FLOWGATE_MODEL_TOKEN: "internal-update-fixture",
       FLOWGATE_STRESS_CHUNKS: "2000",
     },
-  });
+  };
+  let app = await electron.launch(launchOptions);
   try {
-    const page = await app.firstWindow();
+    let page = await app.firstWindow();
     await page
       .getByRole("heading", { name: "概览" })
       .waitFor({ timeout: 20000 });
@@ -241,6 +257,65 @@ for (const variant of process.env.FLOWGATE_UPDATE_VARIANTS?.split(",") ?? [
       JSON.stringify({ variant, gatewayBefore, gatewayAfter }),
     );
     if (variant === "ui") assert.equal(gatewayAfter.port, gatewayBefore.port);
+    if (variant.startsWith("delayed-")) {
+      assert.equal(
+        (await page.evaluate(() => window.shell.request("release.status")))
+          .current,
+        id,
+        "candidate must activate successfully before the injected runtime failure",
+      );
+      const deadline = Date.now() + 30000;
+      let reverted = false,
+        rendererCrashes = 0,
+        nextCrash = Date.now();
+      while (Date.now() < deadline) {
+        if (
+          variant === "delayed-renderer" &&
+          rendererCrashes < 3 &&
+          Date.now() >= nextCrash
+        ) {
+          const replacement = app.waitForEvent("window", { timeout: 15000 });
+          await app.evaluate(({ BrowserWindow }) =>
+            BrowserWindow.getAllWindows()[0]?.webContents.forcefullyCrashRenderer(),
+          );
+          page = await replacement;
+          await page
+            .getByRole("heading", { name: "概览" })
+            .waitFor({ timeout: 15000 });
+          rendererCrashes++;
+          nextCrash = Date.now() + 1500;
+        }
+        try {
+          page = app.windows().at(-1);
+          const state = await page.evaluate(() =>
+            window.shell.request("release.status"),
+          );
+          if (
+            !state.updating &&
+            state.current === null &&
+            state.quarantine.includes(id)
+          ) {
+            await page
+              .getByRole("heading", { name: "概览" })
+              .waitFor({ timeout: 5000 });
+            reverted = true;
+            break;
+          }
+        } catch {}
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      }
+      assert.equal(
+        reverted,
+        true,
+        "runtime crash loop must quarantine and restore bundled UI and hosts: " +
+          (await page.locator("body").innerText()),
+      );
+      const persisted = JSON.parse(
+        await readFile(join(work, "userdata/releases/state.json"), "utf8"),
+      );
+      assert.equal(persisted.current, null);
+      assert.ok(persisted.quarantine.includes(id));
+    }
     const status = await page.evaluate(() =>
       window.shell.request("release.status"),
     );
@@ -291,6 +366,25 @@ for (const variant of process.env.FLOWGATE_UPDATE_VARIANTS?.split(",") ?? [
     await page.evaluate(() =>
       window.flowgate.request("proxy.disconnect", {}, crypto.randomUUID()),
     );
+    if (variant === "delayed-service") {
+      await app.close();
+      app = await electron.launch(launchOptions);
+      page = await app.firstWindow();
+      await page
+        .getByRole("heading", { name: "概览" })
+        .waitFor({ timeout: 20000 });
+      const restarted = await page.evaluate(() =>
+        window.shell.request("release.status"),
+      );
+      assert.equal(restarted.current, null);
+      assert.ok(restarted.quarantine.includes(id));
+      await assert.rejects(
+        page.evaluate(
+          (id) => window.shell.request("release.activate", { id }),
+          id,
+        ),
+      );
+    }
   } finally {
     await app.close();
     await new Promise((r) => server.close(r));

@@ -15,7 +15,11 @@ export class DesktopShell {
   constructor(
     readonly bundle: string,
     public uiPath: string,
-    readonly actions: { quit: () => void; disconnect: () => void },
+    readonly actions: {
+      quit: () => void;
+      disconnect: () => void;
+      rendererFault?: () => Promise<boolean>;
+    },
   ) {}
   authorize(event: Electron.IpcMainInvokeEvent) {
     if (
@@ -58,12 +62,14 @@ export class DesktopShell {
         window.hide();
       }
     });
-    window.webContents.on("render-process-gone", (_event, details) => {
+    window.webContents.on("render-process-gone", async (_event, details) => {
       if (
         !this.quitting &&
         this.window === window &&
         details.reason !== "clean-exit"
       ) {
+        if (await this.actions.rendererFault?.()) return;
+        if (this.quitting || this.window !== window) return;
         this.rendererFailures++;
         if (this.rendererFailures > 3) this.recovery();
         else {
@@ -103,8 +109,14 @@ export class DesktopShell {
     this.open();
   }
   async reload(path: string) {
+    if (path !== this.uiPath) this.rendererFailures = 0;
     this.uiPath = path;
     this.recovering = false;
+    if (this.window?.webContents.isCrashed()) {
+      const crashed = this.window;
+      this.window = undefined;
+      crashed.destroy();
+    }
     const health = new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.readyResolve = undefined;

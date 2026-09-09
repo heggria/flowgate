@@ -1,4 +1,5 @@
 import { DiagnosticTrace } from "../../packages/shell/src/diagnostic-trace";
+import { cleanupStages } from "../../packages/shell/src/cleanup";
 import { deepLinkRoute } from "../../packages/shell/src/deep-link";
 import { CredentialVault } from "../../packages/shell/src/credential-vault";
 import { UpdateTrace } from "../../packages/shell/src/update-trace";
@@ -48,9 +49,7 @@ async function startGateway(directory: string, manifest?: ReleaseSet) {
     return vault.resolve(payload.reference, new Set(["provider.mock"]));
   };
   gateway = host;
-  host.onFault = () => {
-    if (gateway === host) gateway = undefined;
-  };
+  host.onFault = () => hostFault(host, () => gateway === host);
   try {
     await host.start();
   } catch (error) {
@@ -64,6 +63,49 @@ let updating = false,
   recoveryMessage = "业务服务尚未启动";
 let currentDirectory = join(__dirname, "release"),
   currentManifest: ReleaseSet | undefined;
+let faultQueue = Promise.resolve();
+function hostFault(host: ProcessSupervisor, isCurrent: () => boolean) {
+  faultQueue = faultQueue
+    .then(async () => {
+      if (!isCurrent() || updating || quitting) return;
+      try {
+        if (
+          currentManifest &&
+          (await releases.recordRuntimeFault(currentManifest.id))
+        ) {
+          await rollbackRuntime(currentManifest.id);
+          return;
+        }
+        if (!host.canRestart()) throw new Error("宿主连续异常，已停止自动重启");
+        if (host.name === "Service")
+          await clearDeadWriter(
+            join(app.getPath("userData"), "business/writer.lock"),
+          );
+        await host.start();
+        await publish();
+      } catch (error) {
+        recover(error);
+      }
+    })
+    .catch(recover);
+}
+async function rollbackRuntime(id: string) {
+  if (updating || quitting) return;
+  updating = true;
+  try {
+    const fallback = await releases.quarantineRuntime(id);
+    await stopHosts();
+    currentDirectory = fallback?.directory ?? join(__dirname, "release");
+    currentManifest = fallback?.manifest;
+    await startHosts(currentDirectory, currentManifest);
+    await shell.reload(
+      join(currentDirectory, currentManifest?.ui ?? "index.html"),
+    );
+    await publish();
+  } finally {
+    updating = false;
+  }
+}
 app.setName("FlowGate");
 // Tray/service lifetime is independent of window replacement during recovery.
 app.on("window-all-closed", () => {});
@@ -71,20 +113,32 @@ if (process.env.FLOWGATE_TEST_DATA)
   app.setPath("userData", process.env.FLOWGATE_TEST_DATA);
 async function clearDeadWriter(path: string) {
   try {
-    const lock = JSON.parse(await readFile(path, "utf8"));
+    const original = await readFile(path, "utf8");
+    const lock = JSON.parse(original);
     if (!Number.isInteger(lock.pid) || lock.pid < 1)
-      throw new Error("写入锁损坏");
-    try {
-      process.kill(lock.pid, 0);
-      throw new Error("业务写入者仍在运行");
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "ESRCH") throw e;
+      throw new Error("Invalid writer lock");
+    // UtilityProcess exit can precede OS process reaping. Keep the writer fence
+    // until that exact PID is gone; never treat the exit event alone as proof.
+    const deadline = Date.now() + 3000;
+    for (;;) {
+      try {
+        process.kill(lock.pid, 0);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+        if ((await readFile(path, "utf8")) !== original)
+          throw new Error("Writer lock changed during recovery");
+        await unlink(path);
+        return;
+      }
+      if (Date.now() >= deadline)
+        throw new Error("Business writer is still running");
+      await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    await unlink(path);
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
 }
+
 function recover(error: unknown) {
   recoveryMessage = error instanceof Error ? error.message : String(error);
   shell.recovery();
@@ -147,31 +201,11 @@ async function startHosts(directory: string, manifest?: ReleaseSet) {
   );
   attachCapabilities(service);
   service.onSnapshot = (snapshot) => shell.publish(snapshot);
-  service.onFault = async () => {
-    if (updating || quitting) return;
-    const host = service!;
-    if (!host.canRestart()) {
-      recover("业务服务连续异常，已停止自动重启");
-      return;
-    }
-    try {
-      await clearDeadWriter(join(business, "writer.lock"));
-      await host.start();
-      await publish();
-    } catch (error) {
-      recover(error);
-    }
-  };
-  extension.onFault = async () => {
-    if (updating || quitting) return;
-    if (extension!.canRestart())
-      try {
-        await extension!.start();
-      } catch (error) {
-        recover(error);
-      }
-    else recover("扩展宿主超过重启预算");
-  };
+  const serviceHost = service,
+    extensionHost = extension;
+  service.onFault = () => hostFault(serviceHost, () => service === serviceHost);
+  extension.onFault = () =>
+    hostFault(extensionHost, () => extension === extensionHost);
   await clearDeadWriter(join(business, "writer.lock"));
   try {
     await service.start();
@@ -238,6 +272,25 @@ else {
           disconnect: () => {
             void native?.stop("tray-disconnect").then(publish).catch(recover);
           },
+          rendererFault: () =>
+            new Promise<boolean>((resolve) => {
+              faultQueue = faultQueue
+                .then(async () => {
+                  if (
+                    !updating &&
+                    !quitting &&
+                    currentManifest &&
+                    (await releases.recordRuntimeFault(currentManifest.id))
+                  ) {
+                    await rollbackRuntime(currentManifest.id);
+                    resolve(true);
+                  } else resolve(false);
+                })
+                .catch((error) => {
+                  recover(error);
+                  resolve(true);
+                });
+            }),
         },
       );
       shell.installTray();
@@ -324,6 +377,9 @@ else {
             rollbackDirectory = currentDirectory;
             rollbackManifest = currentManifest;
             await gateway?.call("drain");
+            await service?.call("drain");
+          },
+          safePoint: async () => {
             await service?.call("drain");
           },
           stop: stopHosts,
@@ -593,9 +649,21 @@ else {
     if (shell) shell.quitting = true;
     void (async () => {
       try {
-        await stopHosts();
-        await native?.close();
-        await diagnostics?.flush().catch(() => {});
+        await cleanupStages([
+          { name: "hosts", run: stopHosts },
+          {
+            name: "native",
+            run: async () => {
+              await native?.close();
+            },
+          },
+          {
+            name: "diagnostics",
+            run: async () => {
+              await diagnostics?.flush();
+            },
+          },
+        ]);
       } catch (error) {
         quitting = false;
         if (shell) shell.quitting = false;

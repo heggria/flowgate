@@ -5,6 +5,7 @@ export interface UpdateHooks {
   uiOnly?(manifest: ReleaseSet): boolean;
   restoreUI?(): Promise<void>;
   preflight(directory: string, manifest: ReleaseSet): Promise<void>;
+  safePoint?(): Promise<void>;
   drain(): Promise<void>;
   stop(): Promise<void>;
   start(directory: string, manifest: ReleaseSet): Promise<void>;
@@ -42,6 +43,9 @@ export class UpdateCoordinator {
         preflight: async (d, m) => {
           await stage("preflight");
           await this.hooks.preflight(d, m);
+          // Refuse before candidate activation/quarantine and before replacing
+          // any live host when native effects have not reached a known result.
+          if (!this.hooks.uiOnly?.(m)) await this.hooks.safePoint?.();
         },
         switch: async (d, m) => {
           uiOnly = this.hooks.uiOnly?.(m) ?? false;

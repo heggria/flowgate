@@ -17,6 +17,7 @@ interface ReleaseState {
   revoked: string[];
   revocationVersion: number;
   channel: "stable" | "preview";
+  runtimeFailures: Record<string, number[]>;
 }
 export class ReleaseManager {
   state: ReleaseState = {
@@ -27,6 +28,7 @@ export class ReleaseManager {
     revoked: [],
     revocationVersion: 0,
     channel: "stable",
+    runtimeFailures: {},
   };
   constructor(
     readonly directory: string,
@@ -203,6 +205,33 @@ export class ReleaseManager {
     this.state.previous = this.state.current;
     this.state.current = null;
     await this.persist();
+  }
+  async recordRuntimeFault(id: string, now = Date.now()) {
+    if (this.state.current !== id) return false;
+    const recent = (this.state.runtimeFailures[id] ?? []).filter(
+      (time) => time <= now && now - time < 60000,
+    );
+    recent.push(now);
+    this.state.runtimeFailures = { [id]: recent.slice(-3) };
+    await this.persist();
+    return recent.length >= 3;
+  }
+  async quarantineRuntime(id: string) {
+    if (this.state.current !== id) throw new Error("故障版本已切换");
+    let fallback: Awaited<ReturnType<ReleaseManager["resolve"]>> | null = null;
+    const previous = this.state.previous;
+    if (previous && previous !== id) {
+      try {
+        fallback = await this.resolve(previous);
+      } catch {
+        // Never restore an unverified, revoked or quarantined predecessor.
+      }
+    }
+    this.state.quarantine = [...new Set([...this.state.quarantine, id])];
+    this.state.current = fallback?.manifest.id ?? null;
+    this.state.previous = null;
+    await this.persist();
+    return fallback;
   }
   async resolve(id: string, activation = false) {
     if (

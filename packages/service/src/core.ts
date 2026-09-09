@@ -11,6 +11,7 @@ import type {
   NetworkState,
   NodeConfig,
   Operation,
+  KernelState,
   Rule,
   RuleSource,
 } from "../../contracts/src/index";
@@ -64,17 +65,7 @@ export class ServiceCore {
     await this.store.start();
     await readHandoff(this.store.directory, this.store.configuration.revision);
     const kernel = await this.native.status();
-    for (const o of this.store.operations) {
-      if (
-        o.state === "unknown" &&
-        o.kind === "proxy.connect" &&
-        kernel.appliedRevision === o.revision &&
-        kernel.operationId === o.id
-      ) {
-        o.state = "succeeded";
-        o.completedAt = new Date().toISOString();
-      }
-    }
+    await this.reconcileNative(kernel);
     await this.store.persist();
     try {
       const health = (await this.extension("health")) as {
@@ -103,6 +94,33 @@ export class ServiceCore {
         "autoconnect-" + this.store.epoch,
       ).catch(() => {});
     }
+  }
+  private async reconcileNative(kernel?: KernelState) {
+    if (!this.hasUnknownNative()) return;
+    kernel ??= await this.native.status();
+    let changed = false;
+    for (const o of this.store.operations) {
+      if (
+        o.state === "unknown" &&
+        kernel.operationId === o.id &&
+        ((o.kind === "proxy.connect" &&
+          kernel.status === "running" &&
+          kernel.appliedRevision === o.revision) ||
+          (o.kind === "proxy.disconnect" && kernel.status === "stopped"))
+      ) {
+        o.state = "succeeded";
+        o.completedAt = new Date().toISOString();
+        changed = true;
+      }
+    }
+    if (changed) await this.store.persist();
+  }
+  private hasUnknownNative() {
+    return this.store.operations.some(
+      (o) =>
+        o.state === "unknown" &&
+        ["proxy.connect", "proxy.disconnect"].includes(o.kind),
+    );
   }
   async snapshot(): Promise<AppSnapshot> {
     if (this.telemetry && this.native.control)
@@ -199,8 +217,12 @@ export class ServiceCore {
         String(payload?.target ?? ""),
       );
 
-    if (method === "operation.get")
-      return this.store.operations.find((o) => o.id === payload?.id) ?? null;
+    if (method === "operation.get") {
+      return this.store.transact(async () => {
+        await this.reconcileNative();
+        return this.store.operations.find((o) => o.id === payload?.id) ?? null;
+      });
+    }
     if (!operationId) throw new Error("写操作需要 operationId");
     const allowed = [
       "configuration.save",
@@ -219,9 +241,17 @@ export class ServiceCore {
     if (!allowed.includes(method)) throw new Error("不支持的命令");
     return this.store.transact(async () => {
       signal?.throwIfAborted();
+      await this.reconcileNative();
       const previous = this.store.operations.find((o) => o.id === operationId);
       if (previous)
         return { operation: previous, snapshot: await this.snapshot() };
+      if (
+        ["proxy.connect", "proxy.disconnect"].includes(method) &&
+        this.hasUnknownNative()
+      )
+        throw Object.assign(new Error("原生操作结果尚未明确，请稍后核对"), {
+          outcome: "unknown",
+        });
       const operation: Operation = {
         id: operationId,
         traceId:
@@ -490,6 +520,18 @@ export class ServiceCore {
     this.networkObserver.stop();
     for (const controller of this.measuring.values()) controller.abort();
     await this.store.drain();
+    try {
+      await this.reconcileNative();
+      if (this.hasUnknownNative())
+        throw Object.assign(new Error("原生操作结果尚未明确，已延后更新"), {
+          outcome: "unknown",
+        });
+    } catch (error) {
+      this.store.resume();
+      this.lifecycle = "ready";
+      this.networkObserver.start();
+      throw error;
+    }
     await writeHandoff(this.store.directory, {
       version: 1,
       protocol: 1,
