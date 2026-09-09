@@ -1,5 +1,7 @@
 # Release workflow
 
+Status (2026-09-10): the source repository is public at https://github.com/heggria/flowgate and remote macOS verification passed for `fa64a7a` (run 34375563696). The user has deferred Apple certificate/notarization work and dependent privileged acceptance. Keep development packaging available; do not treat certificate availability as a blocker for unrelated work or claim production signing has passed. TUF business-release publishing remains a separate unfinished work item.
+
 1. `npm run verify` on macOS arm64. Build output separates fixed shell/native files from `dist/release`.
 2. `node scripts/manifest.mjs <unique-id> <monotonic-version> [stable|preview]` creates an exact Release Set manifest. Never overwrite a published version.
 3. Publish each `dist/release/<file>` as a TUF target `<id>/<file>` and the manifest as `<channel>/release.json`. Use the maintained [TUF on CI](https://github.com/theupdateframework/tuf-on-ci) publisher or another audited TUF repository implementation. Production signing keys must be separate from build jobs. The ephemeral test fixture is not a production signing service.
