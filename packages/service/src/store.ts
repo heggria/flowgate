@@ -1,6 +1,7 @@
 import { open, readFile, rename, mkdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import type { Configuration, Operation } from "../../contracts/src/index";
+import { extensionPreferences } from "../../contracts/src/extensions";
 import {
   initialConfiguration,
   validateConfiguration,
@@ -17,6 +18,8 @@ export async function atomicWrite(path: string, value: unknown) {
   await rename(tmp, path);
 }
 export class StateStore {
+  extensionPreferences: Record<string, boolean> = {};
+  extensionRevision = 0;
   configuration = initialConfiguration();
   operations: Operation[] = [];
   private lock?: Awaited<ReturnType<typeof open>>;
@@ -42,6 +45,15 @@ export class StateStore {
       validateConfiguration(data.configuration);
       this.configuration = data.configuration;
       this.operations = data.operations ?? [];
+      this.extensionPreferences = extensionPreferences(
+        data.extensionPreferences,
+      );
+      this.extensionRevision = data.extensionRevision ?? 0;
+      if (
+        !Number.isSafeInteger(this.extensionRevision) ||
+        this.extensionRevision < 0
+      )
+        throw new Error("扩展配置修订无效");
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "ENOENT") {
         await this.close();
@@ -58,6 +70,8 @@ export class StateStore {
     await atomicWrite(join(this.directory, "state.json"), {
       configuration: this.configuration,
       operations: this.operations.slice(-200),
+      extensionPreferences: this.extensionPreferences,
+      extensionRevision: this.extensionRevision,
     });
   }
   transact<T>(work: () => Promise<T>): Promise<T> {

@@ -97,9 +97,15 @@ function hostFault(host: ProcessSupervisor, isCurrent: () => boolean) {
             join(app.getPath("userData"), "business/writer.lock"),
           );
         await host.start();
+        if (host.name === "Extensions")
+          await service?.call("extensions.reconcile");
         await publish();
       } catch (error) {
-        recover(error);
+        if (host.name === "Extensions") {
+          // Keep management available after a bundled host exhausts its budget.
+          // A downloaded release was already quarantined above when appropriate.
+          await publish().catch(() => {});
+        } else recover(error);
       }
     })
     .catch(recover);
@@ -176,8 +182,20 @@ function attachCapabilities(host: ProcessSupervisor, readonly = false) {
     if (method === "native.stop") return native.stop(payload.operationId);
     if (
       method === "extension.call" &&
+      payload?.method === "extensions.restart"
+    ) {
+      const host = extension;
+      if (!host) throw new Error("扩展宿主不可用");
+      await host.stop(false);
+      host.resetRestartBudget();
+      await host.start();
+      return host.call("extensions.configure", payload.payload);
+    }
+    if (
+      method === "extension.call" &&
       [
         "health",
+        "extensions.configure",
         "network.inspect",
         "subscription.parse",
         "ruleset.parse",
@@ -202,6 +220,8 @@ async function startHosts(directory: string, manifest?: ReleaseSet) {
       FLOWGATE_RELEASE: manifest?.id ?? "bundled",
       FLOWGATE_HOST_VERSION:
         manifest?.components?.extension ?? app.getVersion(),
+      FLOWGATE_EXPECTED_EXTENSIONS:
+        manifest?.catalogVersion === 1 ? JSON.stringify(manifest.builtins) : "",
     },
   );
   await extension.start();
@@ -421,6 +441,8 @@ else {
         (event) => updateTrace.record(event),
       );
       const clientMethods = new Set([
+        "extensions.setEnabled",
+        "extensions.restart",
         "snapshot",
         "network.refresh",
         "node.measure",

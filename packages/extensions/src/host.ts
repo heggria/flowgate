@@ -2,14 +2,42 @@ import { requestTrace } from "../../runtime/src/trace-context";
 import { RequestScope } from "../../runtime/src/request-scope";
 import { parseRuleSet } from "./ruleset";
 import { inspectSystem } from "../../../src/platform/macos";
-import { createRegistry } from "../../../src/plugins/builtins";
+import { diagnosticPlugins } from "../../../src/plugins/builtins";
+import {
+  builtinExtensions,
+  extensionPreferences,
+} from "../../contracts/src/extensions";
 import { parseSubscription } from "./parser";
 import { assertRequest } from "../../contracts/src/index";
-import { ExtensionRuntime } from "./runtime";
+import { ExtensionManager } from "./manager";
 import type { RuntimeModule } from "../../runtime/src/lifecycle";
 const port = (process as any).parentPort;
 const session = process.env.FLOWGATE_SESSION;
 const epoch = Number(process.env.FLOWGATE_EPOCH);
+if (process.env.FLOWGATE_EXPECTED_EXTENSIONS) {
+  const expected = JSON.parse(process.env.FLOWGATE_EXPECTED_EXTENSIONS) as {
+    id: string;
+    version: string;
+    permissions?: string[];
+    capabilities?: string[];
+    contributions?: string[];
+  }[];
+  if (
+    builtinExtensions.some((entry) => {
+      const declared = expected.find((item) => item.id === entry.id);
+      return (
+        declared?.version !== entry.version ||
+        ["permissions", "capabilities", "contributions"].some(
+          (key) =>
+            JSON.stringify(
+              [...(declared?.[key as "permissions"] ?? [])].sort(),
+            ) !== JSON.stringify([...entry[key as "permissions"]].sort()),
+        )
+      );
+    })
+  )
+    throw new Error("运行扩展版本与受信清单不一致");
+}
 const builtins: RuntimeModule[] = [
   {
     manifest: {
@@ -36,17 +64,10 @@ const builtins: RuntimeModule[] = [
       capabilities: [],
     },
     async activate(context) {
-      const registry = createRegistry();
       context.contribute({
         id: "network.inspect",
         kind: "command",
-        value: async () => {
-          const [system, plugins] = await Promise.all([
-            inspectSystem(),
-            registry.inspect(),
-          ]);
-          return { ...system, plugins };
-        },
+        value: (_: unknown, signal: AbortSignal) => inspectSystem(signal),
       });
     },
   },
@@ -96,15 +117,40 @@ const builtins: RuntimeModule[] = [
     },
   },
 ];
-const runtime = new ExtensionRuntime();
-runtime.modules.trace.onChange = () =>
+
+for (const plugin of diagnosticPlugins()) {
+  const descriptor = builtinExtensions.find((entry) => entry.id === plugin.id)!;
+  builtins.push({
+    manifest: {
+      id: descriptor.id,
+      version: descriptor.version,
+      api: 1,
+      dependencies: descriptor.dependencies,
+      capabilities: descriptor.capabilities,
+    },
+    async activate(context) {
+      context.contribute({
+        id: descriptor.methods[0],
+        kind: "command",
+        value: (_: unknown, signal: AbortSignal) => plugin.inspect(signal),
+      });
+    },
+  });
+}
+const runtime = new ExtensionManager(builtinExtensions, builtins, {
+  epoch,
+  releaseSet: process.env.FLOWGATE_RELEASE ?? "bundled",
+  version: process.env.FLOWGATE_HOST_VERSION ?? "unknown",
+});
+runtime.trace.onChange = () =>
   port.postMessage({
     type: "trace",
     epoch,
     session,
-    event: runtime.modules.trace.snapshot().at(-1),
+    event: runtime.trace.snapshot().at(-1),
   });
-const ready = runtime.start(builtins);
+// Optional packages are not admitted until Service supplies the durable preferences.
+const ready = runtime.configure({}, true);
 ready.catch(() => {});
 const requests = new RequestScope();
 port.on("message", async ({ data }: any) => {
@@ -121,13 +167,22 @@ port.on("message", async ({ data }: any) => {
     if (data.method === "health")
       result = {
         protocol: 1,
-        lifecycle: runtime.modules.status,
-        modules: builtins.map(({ manifest }) => ({
-          id: manifest.id,
-          version: manifest.version,
-          status: runtime.modules.status,
+        lifecycle: "ready",
+        modules: runtime.snapshot().map((entry) => ({
+          id: entry.id,
+          version: entry.version,
+          status: entry.status,
         })),
+        extensions: runtime.snapshot(),
       };
+    else if (data.method === "extensions.configure")
+      result = await requestTrace.run(data.context!, () =>
+        runtime.configure(
+          extensionPreferences(
+            (data.payload as { preferences?: unknown })?.preferences,
+          ),
+        ),
+      );
     else if (data.method === "drain") {
       await runtime.drain(Date.now() + 5000);
       result = { drained: true };
@@ -137,7 +192,9 @@ port.on("message", async ({ data }: any) => {
     } else
       result = await requestTrace.run(data.context!, () =>
         requests.run(data.id, (signal) =>
-          runtime.call(data.method, data.payload, signal),
+          data.method === "network.inspect"
+            ? runtime.inspectNetwork(signal)
+            : runtime.call(data.method, data.payload, signal),
         ),
       );
     port.postMessage({ protocol: 1, id: data.id, epoch, result });

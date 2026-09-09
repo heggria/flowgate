@@ -173,6 +173,8 @@ export interface TrafficSnapshot {
   flows: FlowRecord[];
 }
 export interface AppSnapshot {
+  extensionRevision?: number;
+  extensions?: import("./extensions").ExtensionState[];
   protocol: 1;
   epoch: number;
   releaseSet: string;
@@ -269,6 +271,7 @@ export interface ServiceLifecycle {
   stop(): Promise<void>;
 }
 export interface ReleaseSet {
+  catalogVersion?: 1;
   id: string;
   version: number;
   channel: "stable" | "preview";
@@ -285,6 +288,7 @@ export interface ReleaseSet {
     id: string;
     version: string;
     capabilities?: CapabilityManifest["capabilities"];
+    permissions?: string[];
     contributions?: string[];
   }[];
   releaseNotes?: string;

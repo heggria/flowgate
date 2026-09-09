@@ -1,4 +1,5 @@
 import { egressFixture } from "./egress-fixture.mjs";
+import { isolateProxyPort } from "./proxy-fixture.mjs";
 import { _electron as electron } from "playwright";
 import { tufHandlers } from "@tufjs/repo-mock";
 import { fixtureRepository } from "./tuf-fixture.mjs";
@@ -80,7 +81,16 @@ for (const variant of process.env.FLOWGATE_UPDATE_VARIANTS?.split(",") ?? [
     ui: "index.html",
     service: "service.cjs",
     extension: "extension.cjs",
-    builtins: [],
+    catalogVersion: 1,
+    builtins: JSON.parse(
+      await readFile("packages/contracts/src/builtin-catalog.json", "utf8"),
+    ).map(({ id, version, capabilities, permissions, contributions }) => ({
+      id,
+      version,
+      capabilities,
+      permissions,
+      contributions,
+    })),
     files,
   };
   targets.push({
@@ -164,6 +174,7 @@ for (const variant of process.env.FLOWGATE_UPDATE_VARIANTS?.split(",") ?? [
     await page
       .getByRole("heading", { name: "概览" })
       .waitFor({ timeout: 20000 });
+    await isolateProxyPort(page);
     const before = await page.evaluate(() =>
       window.flowgate.request("snapshot"),
     );
@@ -201,6 +212,18 @@ for (const variant of process.env.FLOWGATE_UPDATE_VARIANTS?.split(",") ?? [
         );
       }, realEgress.proxyPort);
     }
+    await page.evaluate(async () => {
+      const state = await window.flowgate.request("snapshot");
+      await window.flowgate.request(
+        "extensions.setEnabled",
+        {
+          id: "builtin.tailscale",
+          enabled: false,
+          revision: state.extensionRevision,
+        },
+        "update-disable-extension",
+      );
+    });
     await page.evaluate(() =>
       window.flowgate.request("proxy.connect", {}, crypto.randomUUID()),
     );
@@ -211,6 +234,18 @@ for (const variant of process.env.FLOWGATE_UPDATE_VARIANTS?.split(",") ?? [
       window.shell.request("release.check"),
     );
     assert.equal(candidate.id, id);
+    if (variant === "ui") {
+      await page
+        .getByRole("navigation")
+        .getByRole("button", { name: "扩展", exact: true })
+        .click();
+      await page.getByRole("button", { name: "检查更新", exact: true }).click();
+      await page
+        .getByRole("region", { name: "候选版本详情" })
+        .getByRole("heading", { name: id, exact: true })
+        .waitFor();
+    }
+
     await page.evaluate(() => window.shell.request("gateway.start"));
     const gatewayBefore = await page.evaluate(() =>
       window.shell.request("gateway.status"),
@@ -368,6 +403,16 @@ for (const variant of process.env.FLOWGATE_UPDATE_VARIANTS?.split(",") ?? [
     );
     const after = await page.evaluate(() =>
       window.flowgate.request("snapshot"),
+    );
+    assert.equal(
+      after.extensions.find((entry) => entry.id === "builtin.tailscale").status,
+      "stopped",
+      "disabled package survives update/rollback",
+    );
+    assert.equal(
+      after.extensions.find((entry) => entry.id === "builtin.tailscale")
+        .desiredEnabled,
+      false,
     );
     if (variant !== "apply")
       assert.equal(

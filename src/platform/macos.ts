@@ -3,11 +3,16 @@ import { promisify } from "node:util";
 import { networkInterfaces } from "node:os";
 import type { Snapshot } from "../core/types";
 const exec = promisify(execFile);
-export async function run(file: string, args: string[]): Promise<string> {
+export async function run(
+  file: string,
+  args: string[],
+  signal?: AbortSignal,
+): Promise<string> {
   const { stdout } = await exec(file, args, {
     timeout: 5000,
     maxBuffer: 1024 * 1024,
     encoding: "utf8",
+    signal,
   });
   return stdout;
 }
@@ -47,7 +52,9 @@ export function parseSystemProxies(text: string) {
   }
   return result;
 }
-export async function inspectSystem(): Promise<Omit<Snapshot, "plugins">> {
+export async function inspectSystem(
+  signal?: AbortSignal,
+): Promise<Omit<Snapshot, "plugins">> {
   if (process.platform !== "darwin")
     throw new Error("当前版本仅支持 macOS 只读诊断");
   const commands: [string, string[]][] = [
@@ -58,8 +65,9 @@ export async function inspectSystem(): Promise<Omit<Snapshot, "plugins">> {
     ["/usr/sbin/netstat", ["-rn", "-f", "inet6"]],
   ];
   const results = await Promise.allSettled(
-    commands.map(([file, args]) => run(file, args)),
+    commands.map(([file, args]) => run(file, args, signal)),
   );
+  signal?.throwIfAborted();
   const value = (i: number) =>
     results[i].status === "fulfilled"
       ? (results[i] as PromiseFulfilledResult<string>).value

@@ -1,3 +1,4 @@
+import { isolateProxyPort } from "./proxy-fixture.mjs";
 import { _electron as electron } from "playwright";
 import { createServer } from "node:https";
 import { mkdtemp, writeFile, readFile } from "node:fs/promises";
@@ -50,15 +51,15 @@ const app = await electron.launch({
 try {
   const page = await app.firstWindow();
   await page.getByRole("heading", { name: "概览" }).waitFor({ timeout: 20000 });
+  await isolateProxyPort(page);
   await app.evaluate(({ app }) =>
     app.emit("open-url", { preventDefault() {} }, "flowgate://open/rules"),
   );
   await page.getByRole("heading", { name: "分流规则", exact: true }).waitFor();
-  const source = page
-    .locator("section")
-    .filter({
-      has: page.getByRole("heading", { name: "规则集来源", exact: true }),
-    });
+  const source = page.locator("section").filter({
+    has: page.getByRole("heading", { name: /^规则集来源/ }),
+  });
+  await source.getByRole("button", { name: "添加规则集", exact: true }).click();
   await source.getByLabel("名称", { exact: true }).fill("规则测试来源");
   await source
     .getByLabel("HTTPS 来源")

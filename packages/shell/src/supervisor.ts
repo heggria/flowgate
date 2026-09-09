@@ -239,6 +239,9 @@ export class ProcessSupervisor {
     this.failures.push(now);
     return true;
   }
+  resetRestartBudget() {
+    this.failures = [];
+  }
   call<T = unknown>(
     method: string,
     payload?: unknown,

@@ -1,3 +1,4 @@
+import { beforeDeadline } from "../packages/runtime/src/deadline";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -14,6 +15,10 @@ test("measurement waits for fresh authenticated kernel result and releases subsc
     loadSync(schema, { longs: String, defaults: true }),
   );
   const server = new Server();
+  let cancelObserved!: () => void;
+  const cancellation = new Promise<void>((resolve) => {
+    cancelObserved = resolve;
+  });
   let subscription: any,
     closed = false,
     tests = 0;
@@ -25,6 +30,7 @@ test("measurement waits for fresh authenticated kernel result and releases subsc
       subscription = call;
       call.on("cancelled", () => {
         closed = true;
+        cancelObserved();
       });
       call.write({
         outbounds: [{ tag: "node", urlTestTime: "1", urlTestDelay: 7 }],
@@ -68,7 +74,11 @@ test("measurement waits for fresh authenticated kernel result and releases subsc
     );
     assert.equal(result.delayMs, 42);
     assert.equal(tests, 1);
-    await new Promise((r) => setTimeout(r, 20));
+    await beforeDeadline(
+      cancellation,
+      Date.now() + 2000,
+      "server cancellation acknowledgement",
+    );
     assert.equal(closed, true);
   } finally {
     server.forceShutdown();

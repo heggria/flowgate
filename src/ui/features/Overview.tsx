@@ -1,3 +1,4 @@
+import { Combobox, outletChoices } from "../components";
 import type { FeatureProps } from "../modules";
 import { mutation } from "../../../packages/client/src/index";
 import { Traffic } from "./Traffic";
@@ -80,6 +81,33 @@ export function Overview({
           {available ? "实时更新" : connected ? "连接遥测中" : "尚未启动"}
         </span>
       </div>
+      {!c.nodes.length && !c.externalNetworks?.length && !connected ? (
+        <section className="setupcard" aria-label="开始使用">
+          <div className="setupicon">
+            <Icon name="nodes" size={24} />
+          </div>
+          <div>
+            <h2>从一个代理出口开始</h2>
+            <p>
+              导入订阅或节点，选择出口，然后启动代理。也可以先使用直连出口。
+            </p>
+            <div className="setupsteps">
+              <span>
+                <b>1</b> 导入节点
+              </span>
+              <span>
+                <b>2</b> 选择出口
+              </span>
+              <span>
+                <b>3</b> 启动代理
+              </span>
+            </div>
+          </div>
+          <button className="primary" onClick={() => navigate("nodes")}>
+            添加第一个节点
+          </button>
+        </section>
+      ) : null}
       <section className="metrics" aria-label="运行指标">
         {metrics.map((m) => (
           <div className="metric" key={m.label}>
@@ -108,32 +136,26 @@ export function Overview({
               <Icon name="nodes" />
             </button>
           </div>
-          <label className="sr-only" htmlFor="outbound">
-            选择代理节点
-          </label>
-          <select
+          <Combobox
             id="outbound"
+            label="选择代理节点"
             disabled={busy}
             value={c.settings.selectedNode}
-            onChange={(e) =>
-              save({
+            options={outletChoices(c).filter(
+              (option) => option.value !== "block" && option.value !== "select",
+            )}
+            onChange={(value) => {
+              void save({
                 ...c,
-                settings: { ...c.settings, selectedNode: e.target.value },
-              })
-            }
-          >
-            <option value="direct">直接连接</option>
-            {c.nodes.map((n) => (
-              <option key={n.id} value={n.id}>
-                {n.name}
-              </option>
-            ))}
-            {(c.externalNetworks ?? []).map((n) => (
-              <option key={n.id} value={n.id}>
-                {n.name}
-              </option>
-            ))}
-          </select>
+                settings: { ...c.settings, selectedNode: value },
+              });
+            }}
+          />
+          {c.settings.mode === "manual" ? (
+            <p className="hint">
+              手动模式：在需要代理的应用中设置下方 HTTP / SOCKS 地址。
+            </p>
+          ) : null}
           <dl className="settingslist">
             <dt>接入方式</dt>
             <dd>
@@ -156,7 +178,9 @@ export function Overview({
               </button>
             </dd>
             <dt>配置状态</dt>
-            <dd>{pending ? "待应用" : connected ? "已应用" : "未应用"}</dd>
+            <dd>
+              {pending ? "待应用" : connected ? "已应用" : "下次启动生效"}
+            </dd>
           </dl>
           {pending ? (
             <button
@@ -164,7 +188,7 @@ export function Overview({
               disabled={busy}
               onClick={() => run(() => mutation("proxy.connect"))}
             >
-              应用配置
+              重新连接并应用
             </button>
           ) : (
             <div className="exitnote">

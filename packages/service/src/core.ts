@@ -24,7 +24,74 @@ import {
 import { StateStore } from "./store";
 import type { KernelTelemetry } from "./kernel/telemetry";
 import { NetworkObserver } from "./network-observer";
+import {
+  builtinExtensions,
+  extensionPreferences,
+  type ExtensionState,
+} from "../../contracts/src/extensions";
 export class ServiceCore {
+  private extensionStates: ExtensionState[] = [];
+  private async readExtensions() {
+    try {
+      const health = (await this.extension(
+        "health",
+        undefined,
+        AbortSignal.timeout(1500),
+      )) as {
+        extensions?: ExtensionState[];
+      };
+      if (!Array.isArray(health?.extensions))
+        throw new Error("扩展宿主未提供目录");
+      this.extensionStates = builtinExtensions.map((descriptor) => {
+        const observed = health.extensions!.find(
+          (entry) => entry.id === descriptor.id,
+        );
+        if (
+          !observed ||
+          !["starting", "ready", "draining", "stopped", "failed"].includes(
+            observed.status,
+          )
+        )
+          throw new Error("扩展状态无效");
+        return {
+          ...descriptor,
+          enabled: observed.enabled === true,
+          desiredEnabled:
+            this.store.extensionPreferences[descriptor.id] ??
+            descriptor.defaultEnabled,
+          status: observed.status,
+          instance: observed.instance,
+          error: observed.error,
+          releaseSet: this.releaseSet,
+        };
+      });
+      this.moduleInfo = this.extensionStates.map((entry) => ({
+        id: entry.id,
+        name: entry.name,
+        version: entry.version,
+        status: entry.status === "unavailable" ? "failed" : entry.status,
+      }));
+    } catch {
+      this.extensionStates = builtinExtensions.map((descriptor) => ({
+        ...descriptor,
+        enabled: false,
+        desiredEnabled:
+          this.store.extensionPreferences[descriptor.id] ??
+          descriptor.defaultEnabled,
+        status: "unavailable",
+        releaseSet: this.releaseSet,
+        error: "扩展宿主暂时不可用，状态尚未确认。",
+      }));
+    }
+  }
+  async reconcileExtensions() {
+    return this.store.transact(async () => {
+      await this.extension("extensions.configure", {
+        preferences: this.store.extensionPreferences,
+      });
+      await this.readExtensions();
+    });
+  }
   private readonly networkObserver: NetworkObserver;
   lifecycle: AppSnapshot["lifecycle"] = "starting";
   network: NetworkState | null = null;
@@ -114,6 +181,12 @@ export class ServiceCore {
     const kernel = await this.native.status();
     await this.reconcileNative(kernel);
     await this.store.persist();
+    // Only Service owns the durable preferences; the replacement host starts core packages first.
+    try {
+      await this.reconcileExtensions();
+    } catch {
+      await this.readExtensions();
+    }
     try {
       const health = (await this.extension("health")) as {
         modules?: AppSnapshot["modules"];
@@ -170,6 +243,7 @@ export class ServiceCore {
     );
   }
   async snapshot(): Promise<AppSnapshot> {
+    await this.readExtensions();
     if (this.telemetry && this.native.control)
       this.telemetry.connect(await this.native.control());
     const kernel = await this.native.status();
@@ -179,6 +253,8 @@ export class ServiceCore {
     for (const source of visible.ruleSources ?? []) source.url = "";
     return {
       protocol: 1,
+      extensions: this.extensionStates,
+      extensionRevision: this.store.extensionRevision,
       epoch: this.store.epoch,
       releaseSet: this.releaseSet,
       lifecycle: this.lifecycle,
@@ -212,6 +288,10 @@ export class ServiceCore {
         epoch: this.store.epoch,
         lifecycle: this.lifecycle,
       };
+    if (method === "extensions.reconcile") {
+      await this.reconcileExtensions();
+      return { reconciled: true };
+    }
     if (method === "node.measure") {
       if (this.lifecycle !== "ready") throw new Error("服务不可用");
       const id = String(payload?.id ?? "");
@@ -273,6 +353,8 @@ export class ServiceCore {
     }
     if (!operationId) throw new Error("写操作需要 operationId");
     const allowed = [
+      "extensions.setEnabled",
+      "extensions.restart",
       "configuration.save",
       "ruleset.import",
       "ruleset.refresh",
@@ -334,8 +416,48 @@ export class ServiceCore {
       this.store.operations.push(operation);
       await this.store.persist();
       const previousConfiguration = this.store.configuration;
+      const previousPreferences = this.store.extensionPreferences;
+      const previousExtensionRevision = this.store.extensionRevision;
+      let extensionsChanged = false;
       try {
-        if (method === "proxy.connect") {
+        if (
+          method === "extensions.setEnabled" ||
+          method === "extensions.restart"
+        ) {
+          if (payload?.revision !== this.store.extensionRevision)
+            throw new Error("扩展设置已变化，请刷新后重试");
+          let next = previousPreferences;
+          if (method === "extensions.setEnabled") {
+            if (
+              typeof payload?.id !== "string" ||
+              typeof payload?.enabled !== "boolean"
+            )
+              throw new Error("扩展设置无效");
+            next = extensionPreferences({
+              ...previousPreferences,
+              [payload.id]: payload.enabled,
+            });
+          }
+          // Once admitted, this is a lifecycle transaction: cancellation stops waiting, not its commit.
+          await this.extension(
+            method === "extensions.restart"
+              ? "extensions.restart"
+              : "extensions.configure",
+            { preferences: next },
+          );
+          extensionsChanged = true;
+          this.store.extensionPreferences = next;
+          this.store.extensionRevision++;
+          // Discard prior reports immediately; late observations filter against active packages.
+          if (this.network)
+            this.network = {
+              ...this.network,
+              plugins: this.network.plugins.filter(
+                (plugin) => next[plugin.id] ?? true,
+              ),
+            };
+          await this.readExtensions();
+        } else if (method === "proxy.connect") {
           if (
             this.store.configuration.settings.mode !== "manual" &&
             !(await this.native.status()).systemControl
@@ -571,6 +693,17 @@ export class ServiceCore {
         return { operation, snapshot: await this.snapshot() };
       } catch (error) {
         this.store.configuration = previousConfiguration;
+        if (
+          extensionsChanged ||
+          method === "extensions.setEnabled" ||
+          method === "extensions.restart"
+        ) {
+          this.store.extensionPreferences = previousPreferences;
+          this.store.extensionRevision = previousExtensionRevision;
+          await this.extension("extensions.configure", {
+            preferences: previousPreferences,
+          }).catch(() => {});
+        }
         if (method === "ruleset.refresh") {
           const source = this.store.configuration.ruleSources?.find(
             (source) => source.id === payload?.id,

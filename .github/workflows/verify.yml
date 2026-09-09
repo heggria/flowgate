@@ -28,4 +28,5 @@ jobs:
           path: |
             work/*-result.json
             work/ui-*.png
+            work/extensions-*.png
           if-no-files-found: ignore

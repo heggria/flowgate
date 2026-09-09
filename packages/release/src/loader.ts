@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { lstat, readFile, readdir, realpath } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import type { ReleaseSet } from "../../contracts/src/index";
+import { builtinExtensions } from "../../contracts/src/extensions";
 export function validateRelease(manifest: ReleaseSet) {
   if (
     !manifest ||
@@ -74,11 +75,19 @@ export function validateRelease(manifest: ReleaseSet) {
   for (const entry of [manifest.ui, manifest.service, manifest.extension])
     if (!manifest.files[entry]) throw new Error("入口未声明");
   const allowed = new Set([
-    "builtin.subscription",
-    "builtin.network",
-    "builtin.rules",
+    ...builtinExtensions.map((entry) => entry.id),
     "internal.gateway-test",
   ]);
+  if (manifest.catalogVersion !== undefined && manifest.catalogVersion !== 1)
+    throw new Error("扩展目录版本不兼容");
+  if (
+    manifest.catalogVersion === 1 &&
+    (!Array.isArray(manifest.builtins) ||
+      builtinExtensions.some(
+        (entry) => !manifest.builtins.some((item) => item.id === entry.id),
+      ))
+  )
+    throw new Error("内置扩展目录不完整");
   if (
     manifest.releaseNotes !== undefined &&
     (typeof manifest.releaseNotes !== "string" ||
@@ -94,6 +103,17 @@ export function validateRelease(manifest: ReleaseSet) {
     )
       throw new Error("内置模块版本无效");
     builtins.add(builtin.id);
+    const descriptor = builtinExtensions.find(
+      (entry) => entry.id === builtin.id,
+    );
+    if (
+      builtin.permissions &&
+      (!Array.isArray(builtin.permissions) ||
+        builtin.permissions.some(
+          (permission) => !descriptor?.permissions.includes(permission),
+        ))
+    )
+      throw new Error("扩展访问权限提升需要完整应用更新");
     const capabilities =
       builtin.id === "internal.gateway-test"
         ? [

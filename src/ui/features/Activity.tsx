@@ -53,6 +53,8 @@ export function Activity({ snapshot }: FeatureProps) {
                 {(
                   {
                     "proxy.connect": "启动代理",
+                    "extensions.setEnabled": "更改扩展启用状态",
+                    "extensions.restart": "重启扩展宿主",
                     "proxy.disconnect": "停止代理",
                     "configuration.save": "保存配置",
                     "subscription.import": "导入节点",

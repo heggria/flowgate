@@ -67,7 +67,10 @@ export class ModuleRuntime {
   get entries() {
     return [...this.contributions.values()];
   }
-  async activate(modules: RuntimeModule[]) {
+  async activate(
+    modules: RuntimeModule[],
+    satisfiedDependencies: ReadonlySet<string> = new Set(),
+  ) {
     if (this.active.length) throw new Error("Modules already active");
     const byId = new Map(modules.map((m) => [m.manifest.id, m]));
     if (byId.size !== modules.length) throw new Error("Duplicate module");
@@ -78,6 +81,7 @@ export class ModuleRuntime {
       if (visiting.has(id)) throw new Error("Module dependency cycle");
       if (visited.has(id)) return;
       const m = byId.get(id);
+      if (!m && satisfiedDependencies.has(id)) return;
       if (!m) throw new Error("Missing dependency: " + id);
       if (m.manifest.api !== 1) throw new Error("Unsupported module API");
       visiting.add(id);
@@ -128,12 +132,14 @@ export class ModuleRuntime {
   }
   async stop() {
     this.status = "draining";
+    const failures: unknown[] = [];
     for (const entry of this.active.reverse()) {
       entry.controller.abort();
       for (const dispose of entry.disposers.reverse()) {
         try {
           await dispose();
-        } catch {
+        } catch (error) {
+          failures.push(error);
           this.trace.emit(entry.module.manifest.id, "release-failed");
         }
       }
@@ -142,5 +148,9 @@ export class ModuleRuntime {
     this.active = [];
     this.contributions.clear();
     this.status = "stopped";
+    if (failures.length) {
+      this.status = "failed";
+      throw new AggregateError(failures, "Module resource release failed");
+    }
   }
 }

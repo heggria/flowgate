@@ -4,9 +4,11 @@
 
 ## 自动验收
 
+扩展管理专项现已纳入 `npm run verify`：核心权限/依赖约束、独立启停与失败释放、持久偏好、宿主连续崩溃后的 UI 恢复、实际转发保持，以及签名 UI/Service 更新与回退后偏好保留。脚本为 `tests/extensions.test.ts`、`tests/extensions.integration.mjs`；专项通过证据为 `work/extensions-result.json`、`work/extensions-source-final.log` 和 `work/extensions-ui-updates.log`；`work/extensions-final-verify.log` 是 UI 改版期间的失败记录，不代表当前整套通过。新应用测试使用各自的临时代理监听端口，避免与用户应用或并行测试争用 17890。
+
 `npm run verify` 是完整入口，使用隔离数据、本地协议服务器和临时测试证书；不修改系统代理、DNS 或路由。
 
-- 类型、依赖边界、43 项单元/局部测试、业务与原生构建。
+- 类型、依赖边界、49 项单元/局部测试、业务与原生构建。
 - 单写锁、幂等操作、事务排空、版本化交接；模块依赖与原子贡献、任务检查点、存储迁移、期限和资源释放。
 - 节点/订阅管理、草稿与保存失败保护、真实内核测量、规则集 HTTPS 导入/刷新/失败保留。
 - HTTP 与 SOCKS 入站，外部 HTTP 出口，IP 规则直连；SOCKS、Shadowsocks、VMess、VLESS、Trojan、Hysteria2、TUIC 的 TCP、IPv6 目标、DNS 和 UDP 本地矩阵。
