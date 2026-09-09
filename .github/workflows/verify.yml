@@ -21,6 +21,7 @@ jobs:
       - run: npm ci
       - run: node scripts/fetch-kernel.mjs
       - run: npm run verify
+      - run: node tests/background.integration.mjs
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

@@ -11,6 +11,7 @@ import { mkdir, readFile, unlink } from "node:fs/promises";
 import { ProcessSupervisor } from "../../packages/shell/src/supervisor";
 import { NativeSession } from "../../packages/shell/src/native-session";
 import { DesktopShell } from "../../packages/shell/src/desktop-shell";
+import { backgroundTest } from "../../packages/shell/src/test-mode";
 import { UpdateCoordinator } from "../../packages/shell/src/update-coordinator";
 import { ApplicationUpdate } from "../../packages/shell/src/application-update";
 import { ReleaseManager } from "../../packages/release/src/manager";
@@ -65,6 +66,8 @@ let updating = false,
 let currentDirectory = join(__dirname, "release"),
   currentManifest: ReleaseSet | undefined;
 app.setName("FlowGate");
+if (backgroundTest && process.platform === "darwin")
+  app.setActivationPolicy("accessory");
 // Tray/service lifetime is independent of window replacement during recovery.
 app.on("window-all-closed", () => {});
 if (process.env.FLOWGATE_TEST_DATA)

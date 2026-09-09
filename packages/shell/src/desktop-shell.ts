@@ -1,6 +1,7 @@
 import { BrowserWindow, Tray, Menu, nativeImage } from "electron";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { backgroundTest } from "./test-mode";
 export class DesktopShell {
   private readyResolve?: () => void;
   markReady() {
@@ -28,11 +29,16 @@ export class DesktopShell {
   }
   open() {
     if (this.window && !this.window.isDestroyed()) {
-      this.window.show();
-      this.window.focus();
+      if (!backgroundTest) {
+        this.window.show();
+        this.window.focus();
+      }
       return;
     }
     const window = new BrowserWindow({
+      show: !backgroundTest,
+      focusable: !backgroundTest,
+      skipTaskbar: backgroundTest,
       width: 1320,
       height: 860,
       minWidth: 960,
@@ -44,6 +50,8 @@ export class DesktopShell {
         sandbox: true,
         contextIsolation: true,
         nodeIntegration: false,
+        backgroundThrottling: !backgroundTest,
+        focusOnNavigation: !backgroundTest,
       },
     });
     this.window = window;
@@ -78,6 +86,7 @@ export class DesktopShell {
     void window.loadFile(this.uiPath);
   }
   installTray() {
+    if (backgroundTest) return;
     const icon = nativeImage.createFromDataURL(
       "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAGElEQVQ4T2NkYGD4z0ABYBw1YNSAUQMGAAAcEAERrxJuWQAAAABJRU5ErkJggg==",
     );
