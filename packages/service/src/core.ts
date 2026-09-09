@@ -1,3 +1,4 @@
+import { networkPath } from "../../domain/src/network-path";
 import { requestTrace } from "../../runtime/src/trace-context";
 import { measureOutbound, type NodeMeasurement } from "./kernel/measurement";
 import { readHandoff, writeHandoff } from "./handoff";
@@ -27,6 +28,7 @@ export class ServiceCore {
   private readonly networkObserver: NetworkObserver;
   lifecycle: AppSnapshot["lifecycle"] = "starting";
   network: NetworkState | null = null;
+  private networkCoordination: Promise<unknown> = Promise.resolve();
   private measurements = new Map<string, NodeMeasurement>();
   private measuring = new Map<string, AbortController>();
   private moduleInfo: AppSnapshot["modules"] = [];
@@ -45,7 +47,19 @@ export class ServiceCore {
     this.networkObserver = new NetworkObserver(
       async () => (await this.extension("network.inspect")) as NetworkState,
       (state) => {
+        const previous = this.network;
         this.network = state;
+        if (previous && state) {
+          this.networkCoordination = this.networkCoordination
+            .catch(() => {})
+            .then(() => this.coordinateNetwork(previous, state))
+            .catch(() => {
+              if (this.network === state)
+                state.warnings.push(
+                  "网络变化后的连接协调失败，请核对当前连接状态后重试。",
+                );
+            });
+        }
       },
       () => {
         if (this.network)
@@ -59,6 +73,39 @@ export class ServiceCore {
             ],
           };
       },
+    );
+  }
+  private async coordinateNetwork(previous: NetworkState, state: NetworkState) {
+    if (this.lifecycle !== "ready" || this.network !== state) return;
+    const kernel = await this.native.status();
+    const own = kernel.tunInterface;
+    if (networkPath(previous, own) === networkPath(state, own)) return;
+    for (const controller of this.measuring.values()) controller.abort();
+    this.measurements.clear();
+    if (kernel.status !== "running" || this.hasUnknownNative()) return;
+    if (kernel.appliedRevision !== this.store.configuration.revision) {
+      state.warnings.push(
+        "网络已变化，当前有尚未应用的配置；请确认配置后重新连接。",
+      );
+      return;
+    }
+    const conflicts = networkConflicts(this.store.configuration, state, kernel);
+    const blocked = conflicts.filter((c) => c.severity === "blocked");
+    const id = "network-" + randomUUID();
+    // Reuse the same serialized, persisted native operation path as user changes.
+    // Never reclaim proxy settings after another application has taken ownership.
+    await this.request(
+      blocked.length ? "proxy.disconnect" : "proxy.connect",
+      {
+        networkExpectedOperation: kernel.operationId ?? null,
+        networkExpectedRevision: kernel.appliedRevision,
+      },
+      id,
+    );
+    (this.network ?? state).warnings.push(
+      blocked.length
+        ? "检测到网络冲突，已停止本应用连接并按所有权恢复设置。解决冲突后请重新连接。"
+        : "网络路径已变化，已用当前已应用配置重新建立本应用连接。",
     );
   }
   async start() {
@@ -209,6 +256,7 @@ export class ServiceCore {
     }
     if (method === "network.refresh") {
       await this.networkObserver.refresh();
+      await this.networkCoordination;
       return this.snapshot();
     }
     if (method === "policy.explain")
@@ -252,6 +300,17 @@ export class ServiceCore {
         throw Object.assign(new Error("原生操作结果尚未明确，请稍后核对"), {
           outcome: "unknown",
         });
+      if (payload?.networkExpectedRevision !== undefined) {
+        const current = await this.native.status();
+        if (
+          this.lifecycle !== "ready" ||
+          current.status !== "running" ||
+          (current.operationId ?? null) !== payload.networkExpectedOperation ||
+          current.appliedRevision !== payload.networkExpectedRevision ||
+          this.store.configuration.revision !== payload.networkExpectedRevision
+        )
+          return;
+      }
       const operation: Operation = {
         id: operationId,
         traceId:
@@ -282,6 +341,25 @@ export class ServiceCore {
             !(await this.native.status()).systemControl
           )
             throw new Error("请先安装并批准已签名的系统辅助服务");
+          if (
+            this.store.configuration.settings.mode !== "manual" ||
+            (this.store.configuration.externalNetworks ?? []).length
+          ) {
+            const observed = (await this.extension(
+              "network.inspect",
+            )) as NetworkState;
+            if (!observed || !Array.isArray(observed.interfaces))
+              throw new Error("无法确认外部网络状态，暂不接管系统网络");
+            this.network = observed;
+            const conflicts = networkConflicts(
+              this.store.configuration,
+              observed,
+              await this.native.status(),
+            );
+            const blocked = conflicts.filter((c) => c.severity === "blocked");
+            if (blocked.length)
+              throw new Error(blocked.map((c) => c.message).join("\n"));
+          }
           await this.native.apply(
             compileConfiguration(this.store.configuration),
             this.store.configuration.revision,

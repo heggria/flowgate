@@ -12,6 +12,7 @@ final class NetworkEngine {
     var revision: Int?
     var operation: String?
     var mode = "manual"
+    var tunInterface: String?
     var lastError: String?
     init(kernelPath: String, directory: URL, privileged: Bool) throws {
         self.controlPort=try availableLoopbackPort()
@@ -40,6 +41,7 @@ final class NetworkEngine {
         var value: [String: Any] = ["status": kernel?.isRunning == true ? "running" : lastError == nil ? "stopped" : "failed", "systemControl": privileged, "version": "1.14.0"]
         if let process = kernel, process.isRunning { value["pid"] = process.processIdentifier; value["appliedRevision"] = revision }
         value["operationId"] = operation
+        if kernel?.isRunning == true { value["tunInterface"] = tunInterface }
         value["systemProxyOwned"] = privileged && mode == "system" && kernel?.isRunning == true && proxies.isCurrentOwner(operationId: operation ?? "")
         value["message"] = lastError ?? (privileged ? "系统辅助服务已连接" : "手动代理可用；系统代理与 TUN 需要批准特权辅助服务")
         return value
@@ -52,7 +54,7 @@ final class NetworkEngine {
             while p.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.02) }
             if p.isRunning { kill(p.processIdentifier, SIGKILL); p.waitUntilExit() }
         }
-        kernel = nil; revision = nil; lastError = nil
+        kernel = nil; revision = nil; lastError = nil; tunInterface = nil
         journal.record.phase = "stopped"; journal.record.kernelPID = nil; journal.record.kernelBirth=nil; try journal.persist()
     }
     func validate(_ config: [String: Any], mode: String) throws {
@@ -80,6 +82,17 @@ final class NetworkEngine {
         try validate(config, mode: mode)
         guard FileManager.default.isExecutableFile(atPath: kernelPath) else { throw NSError(domain: "未找到已验证的 sing-box 内核", code: 26) }
         var effective=config
+        if mode == "tun" {
+            var head: UnsafeMutablePointer<ifaddrs>?
+            guard getifaddrs(&head) == 0 else { throw NSError(domain:"无法检查现有接口",code:30) }
+            defer { freeifaddrs(head) }
+            var names=Set<String>();var cursor=head
+            while let item=cursor {names.insert(String(cString:item.pointee.ifa_name));cursor=item.pointee.ifa_next}
+            let name = (kernel?.isRunning == true ? tunInterface : nil) ?? (100...999).map {"utun\($0)"}.first {!names.contains($0)}
+            guard let name=name else {throw NSError(domain:"没有可用的 TUN 接口",code:31)}
+            var inbounds=effective["inbounds"] as! [[String:Any]]
+            inbounds[0]["interface_name"]=name;effective["inbounds"]=inbounds
+        }
         effective["services"]=[["type":"api","listen":"127.0.0.1","listen_port":controlPort,"secret":apiSecret,"dashboard":false,"access_control_allow_origin":["flowgate://local"]]]
         let candidate = directory.appendingPathComponent("candidate.json")
         try JSONSerialization.data(withJSONObject: effective).write(to: candidate, options: .atomic)
@@ -107,6 +120,9 @@ final class NetworkEngine {
         let process = Process(); process.executableURL = URL(fileURLWithPath: kernelPath); process.arguments = ["run", "-c", path.path]
         process.standardInput = FileHandle.nullDevice; process.standardOutput = FileHandle.nullDevice; process.standardError = FileHandle.nullDevice
         try process.run(); kernel = process;
+        let launched = try JSONSerialization.jsonObject(with: Data(contentsOf:path)) as? [String:Any]
+        let inbound = (launched?["inbounds"] as? [[String:Any]])?.first
+        tunInterface = inbound?["type"] as? String == "tun" ? inbound?["interface_name"] as? String : nil
         do { try startKernelWatchdog(kernel: process.processIdentifier, directory: directory, privileged: privileged) } catch { process.terminate(); throw error }; journal.record.kernelPID=process.processIdentifier;journal.record.kernelBirth=processBirth(process.processIdentifier);try journal.persist();Thread.sleep(forTimeInterval: 0.25)
         guard process.isRunning else { throw NSError(domain: "内核启动失败，可能监听端口冲突", code: 27) }
     }

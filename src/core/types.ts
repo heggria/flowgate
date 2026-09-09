@@ -12,7 +12,7 @@ export interface Snapshot {
   ipv6Routes?: string[];
   capturedAt: string;
   platform: string;
-  interfaces: { name: string; addresses: string[] }[];
+  interfaces: { name: string; addresses: string[]; cidrs?: string[] }[];
   defaultInterface: string | null;
   defaultGateway: string | null;
   proxyEnabled: boolean | null;

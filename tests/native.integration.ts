@@ -1,3 +1,6 @@
+import { ServiceCore } from "../packages/service/src/core";
+import { StateStore } from "../packages/service/src/store";
+import type { NetworkState } from "../packages/contracts/src/index";
 import { measureOutbound } from "../packages/service/src/kernel/measurement";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
@@ -131,6 +134,52 @@ try {
     `http://127.0.0.1:${originPort}/`,
   ]);
   assert.equal(socks.stdout, "flowgate-origin-ok");
+  const observed: NetworkState = {
+    capturedAt: "",
+    defaultInterface: "lo0",
+    defaultGateway: "127.0.0.1",
+    interfaces: [{ name: "lo0", addresses: ["127.0.0.1"] }],
+    proxyEnabled: false,
+    dns: [],
+    routes: [],
+    warnings: [],
+    plugins: [],
+  };
+  const service = new ServiceCore(
+    new StateStore(join(dir, "service"), 1),
+    native,
+    async (method) =>
+      method === "network.inspect" ? structuredClone(observed) : {},
+    "native-network-test",
+  );
+  try {
+    await service.start();
+    c.revision = 5;
+    c.rules = [];
+    service.store.configuration = c;
+    await service.request("network.refresh", {});
+    await service.request("proxy.connect", {}, "service-connect");
+    const beforeChange = await native.status(),
+      beforeCount = externalConnections;
+    observed.defaultGateway = "127.0.0.2"; // Observation event only; never mutates host routes.
+    await service.request("network.refresh", {});
+    const afterChange = await native.status();
+    assert.notEqual(afterChange.pid, beforeChange.pid);
+    assert.equal(afterChange.appliedRevision, 5);
+    assert.equal((await request()).stdout, "flowgate-origin-ok");
+    assert.ok(
+      externalConnections > beforeCount,
+      "reconciled traffic retains the selected external proxy",
+    );
+    await service.request("network.refresh", {});
+    assert.equal(
+      (await native.status()).pid,
+      afterChange.pid,
+      "identical observations do not churn the kernel",
+    );
+  } finally {
+    await service.stop();
+  }
   await native.stop("real-stop");
   assert.equal((await native.status()).status, "stopped");
   await writeFile(
@@ -148,6 +197,7 @@ try {
           "real measured URL through selected proxy",
           "SOCKS5 inbound forwarding",
           "owned endpoint stops",
+          "injected network change restarts real kernel and preserves selected egress without changing host routes",
           "no global network mutation",
         ],
       },

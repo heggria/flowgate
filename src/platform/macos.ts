@@ -85,6 +85,7 @@ export async function inspectSystem(): Promise<Omit<Snapshot, "plugins">> {
     interfaces: Object.entries(networkInterfaces()).map(([name, items]) => ({
       name,
       addresses: (items ?? []).map((i) => i.address),
+      cidrs: (items ?? []).flatMap((i) => (i.cidr ? [i.cidr] : [])),
     })),
     defaultInterface,
     defaultGateway: value(0).match(/gateway:\s*(\S+)/)?.[1] ?? null,

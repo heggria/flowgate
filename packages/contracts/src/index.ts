@@ -118,6 +118,7 @@ export interface KernelState {
   message?: string;
   systemControl: boolean;
   systemProxyOwned?: boolean;
+  tunInterface?: string;
   version?: string;
 }
 export interface SystemProxyObservation {
@@ -133,7 +134,7 @@ export interface NetworkState {
   defaultInterface: string | null;
   defaultGateway: string | null;
   proxyEnabled: boolean | null;
-  interfaces: { name: string; addresses: string[] }[];
+  interfaces: { name: string; addresses: string[]; cidrs?: string[] }[];
   dns: { domain: string; servers: string[] }[];
   routes: string[];
   warnings: string[];
