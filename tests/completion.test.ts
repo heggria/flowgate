@@ -234,6 +234,7 @@ test("network conflicts distinguish owned proxy and missing explicit interface",
     networkConflicts(config, observed, {
       status: "running",
       systemControl: true,
+      systemProxyOwned: true,
     }).map((x) => x.id),
     ["interface:vpn"],
   );

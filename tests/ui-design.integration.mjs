@@ -292,7 +292,7 @@ try {
   await p.screenshot({ path: join(evidence, "subscription-dark.png") });
   await p.keyboard.press("Escape");
   await app.evaluate(({ BrowserWindow }) =>
-    BrowserWindow.getAllWindows()[0].setSize(900, 760),
+    BrowserWindow.getAllWindows()[0].setSize(960, 760),
   );
   for (const route of [
     "节点与订阅",

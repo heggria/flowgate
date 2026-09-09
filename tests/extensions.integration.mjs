@@ -47,6 +47,13 @@ try {
       value.extensions?.length === 5 &&
       value.extensions.every((entry) => entry.status === "ready"),
   );
+  assert.equal(await page.getByRole("article").count(), 2);
+  assert.equal(await page.getByRole("region", { name: "扩展详情" }).count(), 0);
+  assert.equal(
+    await page.getByRole("button", { name: "检查更新", exact: true }).count(),
+    0,
+  );
+  await page.getByRole("button", { name: /核心能力/ }).click();
   assert.equal(await page.getByRole("article").count(), 5);
   const core = page.getByRole("article", { name: "系统网络发现" });
   assert.equal(
@@ -95,8 +102,17 @@ try {
   };
   await forward();
   const optional = page.getByRole("article", { name: "Tailscale 状态诊断" });
-  await optional.getByRole("button", { name: "停用", exact: true }).click();
-  await optional.getByRole("button", { name: "启用", exact: true }).waitFor();
+  await optional.getByRole("switch").click();
+  await waitFor(
+    snapshot,
+    (s) =>
+      s.extensions.find((e) => e.id === "builtin.tailscale").status ===
+      "stopped",
+  );
+  await waitFor(
+    () => optional.getByRole("switch").isChecked(),
+    (value) => !value,
+  );
   const disabled = await snapshot();
   assert.equal(disabled.configuration.revision, before.configuration.revision);
   assert.equal(disabled.kernel.pid, before.kernel.pid);
@@ -111,7 +127,7 @@ try {
   checks.push(
     "optional disable changes real diagnostics without stopping kernel or changing network revision",
   );
-  await optional.getByRole("button", { name: "查看详情", exact: true }).click();
+  await optional.getByRole("button", { name: /查看 .* 详情/ }).click();
   await page
     .getByRole("region", { name: "扩展详情" })
     .getByText("技术信息与故障追踪")
@@ -121,24 +137,36 @@ try {
     .getByRole("region", { name: "扩展详情" })
     .getByText(/stopped/)
     .waitFor();
-  await page.getByRole("textbox", { name: "搜索扩展" }).fill("not-found");
-  await page.getByText("没有匹配的扩展").waitFor();
-  await page.getByRole("button", { name: "清除筛选" }).click();
-  await page
-    .getByRole("combobox", { name: "扩展类型" })
-    .selectOption("optional");
+  await page.keyboard.press("Escape");
+  await waitFor(
+    () =>
+      optional
+        .getByRole("button", { name: /查看 .* 详情/ })
+        .evaluate((el) => el === document.activeElement),
+    (value) => value,
+  );
+  await page.getByRole("button", { name: /核心能力/ }).click();
   assert.equal(await page.getByRole("article").count(), 2);
   await page.screenshot({ path: "work/extensions-light.png", fullPage: true });
   await app.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows()[0].setSize(960, 760),
   );
+  await optional.getByRole("button", { name: /查看 .* 详情/ }).click();
+  assert.equal(await optional.isVisible(), false);
   assert.equal(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= window.innerWidth,
     ),
     true,
   );
-  checks.push("details, lifecycle trace, search, filters and narrow window");
+  await page.screenshot({
+    path: "work/extensions-detail-narrow.png",
+    fullPage: true,
+  });
+  await page.getByRole("button", { name: "返回扩展列表" }).click();
+  checks.push(
+    "grouped rows, core disclosure, on-demand details/updates, focus restoration and narrow detail page",
+  );
   const prior = await snapshot();
   await app.evaluate(({ app }) => {
     const host = app
@@ -222,9 +250,24 @@ try {
     .getByRole("button", { name: "扩展", exact: true })
     .click();
   const row = page.getByRole("article", { name: "Tailscale 状态诊断" });
-  await row.getByRole("button", { name: "启用", exact: true }).waitFor();
-  await row.getByRole("button", { name: "启用", exact: true }).click();
-  await row.getByRole("button", { name: "停用", exact: true }).waitFor();
+  await waitFor(
+    snapshot,
+    (s) =>
+      s.extensions.find((e) => e.id === "builtin.tailscale")?.status ===
+      "stopped",
+  );
+  assert.equal(await row.getByRole("switch").isChecked(), false);
+  await row.getByRole("switch").click();
+  await waitFor(
+    snapshot,
+    (s) =>
+      s.extensions.find((e) => e.id === "builtin.tailscale").status === "ready",
+  );
+  await waitFor(
+    () => row.getByRole("switch").isChecked(),
+    (value) => value,
+  );
+  await page.getByRole("button", { name: "管理更新" }).click();
   await page.evaluate(() => window.flowgate.request("network.refresh"));
   assert.equal(
     (await snapshot()).network.plugins.some(
@@ -241,8 +284,9 @@ try {
   });
   await page.getByRole("button", { name: "检查更新", exact: true }).click();
   await page
-    .getByRole("status")
+    .getByRole("alert")
     .filter({ hasText: /官方更新源尚未配置|ERR_BLOCKED_BY_CLIENT/ })
+    .first()
     .waitFor();
   assert.equal(
     (await snapshot()).extensions.every((entry) => entry.status === "ready"),
@@ -250,6 +294,39 @@ try {
   );
   checks.push(
     "app restart persists disabled state; re-enable restores diagnostics; offline catalog preserves running modules",
+  );
+  await app.evaluate(({ ipcMain }) => {
+    globalThis.extensionTestWrites = 0;
+    ipcMain.removeHandler("client:request");
+    ipcMain.handle("client:request", async (_event, input) => {
+      if (input.method !== "extensions.setEnabled")
+        throw new Error("Unexpected test request");
+      globalThis.extensionTestWrites++;
+      await new Promise((resolve) => setTimeout(resolve, 900));
+      throw new Error("测试：状态已更新，请重新尝试");
+    });
+  });
+  const toggle = row.getByRole("switch");
+  await toggle.focus();
+  await page.keyboard.press("Space");
+  await waitFor(
+    () => toggle.getAttribute("aria-busy"),
+    (value) => value === "true",
+  );
+  await page.keyboard.press("Space");
+  assert.equal(await toggle.isChecked(), true);
+  await row
+    .getByRole("alert")
+    .filter({ hasText: "测试：状态已更新" })
+    .waitFor();
+  assert.equal(await app.evaluate(() => globalThis.extensionTestWrites), 1);
+  assert.equal(await toggle.isChecked(), true);
+  assert.equal(
+    await toggle.evaluate((el) => el === document.activeElement),
+    true,
+  );
+  checks.push(
+    "injected rejected write: pending prevents duplicates, retains confirmed preference, inline error and keyboard focus",
   );
   assert.deepEqual(errors, []);
   await writeFile(

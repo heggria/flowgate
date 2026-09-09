@@ -22,26 +22,22 @@ try {
   const page = await app.firstWindow();
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
-  await page
-    .getByRole("heading", { name: "概览" })
-    .waitFor({ timeout: 30000 });
+  await page.getByRole("heading", { name: "概览" }).waitFor({ timeout: 30000 });
   const listenPort = await isolateProxyPort(page);
   await page.getByRole("button", { name: "节点与订阅", exact: false }).click();
   await openNodeImport(page);
-  await page
-    .getByRole("textbox", { name: "订阅链接或配置" })
-    .fill(
-      JSON.stringify({
-        outbounds: [
-          {
-            type: "socks",
-            tag: "Local test",
-            server: "127.0.0.1",
-            server_port: 19999,
-          },
-        ],
-      }),
-    );
+  await page.getByRole("textbox", { name: "订阅链接或配置" }).fill(
+    JSON.stringify({
+      outbounds: [
+        {
+          type: "socks",
+          tag: "Local test",
+          server: "127.0.0.1",
+          server_port: 19999,
+        },
+      ],
+    }),
+  );
   await page.getByRole("button", { name: "导入节点", exact: true }).click();
   await page.getByText("Local test", { exact: true }).waitFor();
   await page.getByRole("dialog").waitFor({ state: "hidden" });
@@ -49,8 +45,8 @@ try {
   await openRuleEditor(page);
   await page.getByRole("textbox", { name: "匹配内容" }).fill("example.com");
   await page.getByRole("button", { name: "添加规则", exact: true }).click();
-  await page.getByText("example.com", { exact: true }).waitFor();
   await page.getByRole("dialog").waitFor({ state: "hidden" });
+  await page.getByText("example.com", { exact: true }).waitFor();
 
   await page.getByRole("textbox", { name: "目标域名" }).fill("www.example.com");
   await page.getByRole("button", { name: "检查路径" }).click();
@@ -76,9 +72,7 @@ try {
   assert.equal((await request()).stdout, "flowgate-e2e-origin");
   const before = await page.evaluate(() => window.flowgate.request("snapshot"));
   await page.reload();
-  await page
-    .getByRole("heading", { name: "概览" })
-    .waitFor();
+  await page.getByRole("heading", { name: "概览" }).waitFor();
   const after = await page.evaluate(() => window.flowgate.request("snapshot"));
   assert.equal(after.epoch, before.epoch);
   assert.equal(after.configuration.revision, before.configuration.revision);

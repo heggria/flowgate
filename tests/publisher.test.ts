@@ -14,6 +14,10 @@ import {
   readPublisherRepository,
   type SigningRole,
 } from "../packages/release/src/publisher";
+import {
+  validateRelease,
+  validateReleaseManifest,
+} from "../packages/release/src/loader";
 import type { ReleaseSet } from "../packages/contracts/src/index";
 const keys = () =>
   Object.fromEntries(
@@ -44,12 +48,14 @@ async function fixture() {
     id: "release-one",
     version: 1,
     channel: "preview",
+    platforms: [process.platform === "darwin" ? "linux-x64" : "darwin-arm64"],
     shellApi: { min: 1, max: 1 },
     protocol: 1,
     schema: { min: 1, max: 1 },
     ui: "entry.js",
     service: "entry.js",
     extension: "entry.js",
+    catalogVersion: 1,
     builtins: [],
     files: {
       "entry.js": {
@@ -84,6 +90,42 @@ test("publisher separates roles, publishes immutable targets, promotes, renews, 
           f.signers.root,
         ),
       /separate keys/,
+    );
+    assert.throws(() => validateRelease(f.manifest), /平台/);
+    assert.doesNotThrow(() => validateReleaseManifest(f.manifest));
+    assert.throws(
+      () =>
+        validateRelease({
+          ...f.manifest,
+          platforms: [process.platform + "-" + process.arch],
+        }),
+      /目录不完整/,
+    );
+    const future = JSON.parse(
+      JSON.stringify({
+        ...f.manifest,
+        protocol: 2,
+        shellApi: { min: 2, max: 3 },
+        schema: { min: 2, max: 2 },
+        catalogVersion: 2,
+      }),
+    );
+    assert.doesNotThrow(() => validateReleaseManifest(future));
+    assert.throws(() => validateRelease(future), /不兼容/);
+    assert.throws(
+      () =>
+        validateReleaseManifest({
+          ...f.manifest,
+          builtins: [
+            { id: "legacy", version: "1", permissions: ["unsafe whitespace"] },
+          ],
+        }),
+      /能力声明/,
+    );
+
+    assert.throws(
+      () => validateReleaseManifest({ ...f.manifest, platforms: [] }),
+      /平台/,
     );
     const first = await f.publish(f.bootstrap, "first", {
       kind: "release",

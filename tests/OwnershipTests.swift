@@ -20,8 +20,11 @@ final class FixturePreferences: ProxyBackend, ProxyTransaction {
         precondition(journal.record.changes.isEmpty)
         backend.values["wifi"]?["ProxyAutoConfigEnable"] = 0
         try owner.apply(port: 17890, operationId: "owned")
+        precondition(owner.isCurrentOwner(operationId: "owned"))
+        precondition(!owner.isCurrentOwner(operationId: "wrong-generation"))
         // Another application changes just one member of the HTTP group.
         backend.values["wifi"]?["HTTPPort"] = 9999
+        precondition(!owner.isCurrentOwner(operationId: "owned"))
         backend.failCommit = true
         do { try owner.restore(); fatalError("failure ignored") } catch { }
         precondition(!journal.record.changes.isEmpty && !backend.locked)

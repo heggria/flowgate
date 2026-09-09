@@ -1,3 +1,7 @@
+import {
+  PausableTimers,
+  type TimerTicket,
+} from "../../runtime/src/pausable-timers";
 import { randomUUID, createHash } from "node:crypto";
 import { MockGateway, manifest } from "./gateway";
 import { CapabilityHost } from "../../runtime/src/capabilities";
@@ -7,20 +11,21 @@ const epoch = Number(process.env.FLOWGATE_EPOCH),
   session = process.env.FLOWGATE_SESSION;
 const token = process.env.FLOWGATE_MODEL_TOKEN;
 if (!token) throw new Error("Missing model token");
+const capabilityTimers = new PausableTimers();
 const pending = new Map<
   string,
   {
-    resolve: (value: string) => void;
+    resolve: (value: any) => void;
     reject: (error: Error) => void;
-    timer: NodeJS.Timeout;
+    timer: TimerTicket;
   }
 >();
-function credential(reference: string): Promise<string> {
+function hostRequest(method: string, payload: unknown): Promise<any> {
   return new Promise((resolve, reject) => {
     const id = randomUUID();
-    const timer = setTimeout(() => {
+    const timer = capabilityTimers.timeout(() => {
       pending.delete(id);
-      reject(new Error("Credential timeout"));
+      reject(new Error("Host capability timeout"));
     }, 5000);
     pending.set(id, { resolve, reject, timer });
     port.postMessage({
@@ -29,33 +34,51 @@ function credential(reference: string): Promise<string> {
       id,
       epoch,
       session,
-      method: "credential.resolve",
-      payload: { reference },
+      method,
+      payload,
     });
   });
 }
+const upstream = process.env.FLOWGATE_INTERNAL_UPSTREAM;
+const egressId = upstream ? "flowgate.policy" : "test.explicit";
 const host = new CapabilityHost(
   manifest,
-  new Set(["test.explicit"]),
+  new Set([egressId]),
   new Set(["provider.mock"]),
-  credential,
+  (reference) => hostRequest("credential.resolve", { reference }),
+  upstream ? (id) => hostRequest("egress.resolve", { id }) : undefined,
 );
 const gateway = new MockGateway(
   token,
-  { id: "test.explicit", resolve: async () => ({ id: "test.explicit" }) },
+  { id: egressId, resolve: async () => ({ id: egressId }) },
   1,
   Number(process.env.FLOWGATE_STRESS_CHUNKS ?? 0),
   host,
+  upstream,
 );
 const ready = host.service("gateway", gateway);
 ready.catch(() => {});
 port.on("message", async ({ data }: any) => {
+  if (data?.type === "power") {
+    if (
+      data.protocol === 1 &&
+      data.epoch === epoch &&
+      data.session === session
+    ) {
+      if (data.suspended === true) capabilityTimers.pause();
+      else if (data.suspended === false) capabilityTimers.resume();
+    }
+    return;
+  }
   if (data?.type === "capability.result") {
     const request = pending.get(data.id);
     if (!request) return;
-    clearTimeout(request.timer);
+    request.timer.cancel();
     pending.delete(data.id);
-    if (data.error) request.reject(new Error("Credential unavailable"));
+    if (data.error)
+      request.reject(
+        new Error(data.error.message ?? "Host capability unavailable"),
+      );
     else request.resolve(data.result);
     return;
   }
@@ -73,6 +96,7 @@ port.on("message", async ({ data }: any) => {
         releaseSet: process.env.FLOWGATE_RELEASE,
         resources: host.resources(),
         ledger: gateway.ledger.snapshot(),
+        lastFailure: gateway.lastFailure,
       };
     else if (data.method === "credential.probe")
       result = await host.credential("provider.mock", async (secret) => ({

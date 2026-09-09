@@ -28,7 +28,7 @@ import {
   Signature,
 } from "@tufjs/models";
 import type { ReleaseSet } from "../../contracts/src/index";
-import { validateRelease, verifyDirectory } from "./loader";
+import { validateReleaseManifest, verifyPublishedDirectory } from "./loader";
 export type SigningRole = "root" | "targets" | "snapshot" | "timestamp";
 export interface RoleSigner {
   key: Key;
@@ -351,8 +351,8 @@ export async function preparePublisher(
     : { version: 0, releases: [] };
   if (change.kind === "release") {
     const manifest = change.manifest;
-    validateRelease(manifest);
-    await verifyDirectory(change.artifacts, manifest);
+    validateReleaseManifest(manifest);
+    await verifyPublishedDirectory(change.artifacts, manifest);
     if (
       targets.signed.targets[`releases/${manifest.id}.json`] ||
       policy.releases.includes(manifest.id)
@@ -387,7 +387,7 @@ export async function preparePublisher(
     const manifest = JSON.parse(
       (await targetBytes(directory, target)).toString(),
     ) as ReleaseSet;
-    validateRelease(manifest);
+    validateReleaseManifest(manifest);
     const previous = targets.signed.targets["stable/release.json"];
     if (
       previous &&
@@ -495,7 +495,7 @@ async function validatePublisherTransition(
     const record = JSON.parse(
       (await targetBytes(directory, target)).toString(),
     ) as ReleaseSet;
-    validateRelease(record);
+    validateReleaseManifest(record);
     if (name !== `releases/${record.id}.json` || versions.has(record.version))
       throw new Error("Invalid or duplicate release record");
     if (!base.targets.signed.targets[name] && record.version <= oldMaximum)
@@ -537,7 +537,7 @@ async function validatePublisherTransition(
     const manifest = JSON.parse(
       (await targetBytes(directory, target)).toString(),
     ) as ReleaseSet;
-    validateRelease(manifest);
+    validateReleaseManifest(manifest);
     const record = records.get(manifest.id);
     if (
       !record ||

@@ -1,4 +1,6 @@
 import type { Configuration, NodeConfig } from "../../contracts/src/index";
+import { tunAddresses } from "./ip-range";
+import { isLoopbackHost } from "./endpoint";
 export function initialConfiguration(): Configuration {
   return {
     schema: 1,
@@ -39,10 +41,7 @@ export function validateConfiguration(c: Configuration): void {
   const ids = new Set(["direct", "block", "select"]);
   for (const n of c.nodes) {
     validateNode(n);
-    if (
-      ["localhost", "127.0.0.1", "::1", "[::1]"].includes(n.server) &&
-      n.port === c.settings.listenPort
-    )
+    if (isLoopbackHost(n.server) && n.port === c.settings.listenPort)
       throw new Error("节点指向本应用监听端口，会形成代理循环");
     if (ids.has(n.id)) throw new Error("节点标识重复");
     ids.add(n.id);
@@ -238,7 +237,7 @@ export function compileConfiguration(c: Configuration) {
               type: "tun",
               tag: "tun-in",
               interface_name: "utun",
-              address: ["172.29.0.1/30", "fdfe:dcba:9876::1/126"],
+              address: tunAddresses,
               auto_route: true,
               strict_route: true,
             },
@@ -272,7 +271,8 @@ export function compileConfiguration(c: Configuration) {
       })),
     ],
     route: {
-      auto_detect_interface: true,
+      // TUN needs loop prevention. Manual/system listeners must honor OS VPN routes.
+      auto_detect_interface: c.settings.mode === "tun",
       default_domain_resolver: "bootstrap",
       rules: [
         { action: "sniff" },

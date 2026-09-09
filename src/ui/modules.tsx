@@ -1,3 +1,4 @@
+import { PageHeader } from "./components";
 import { client } from "../../packages/client/src/index";
 import { ConnectionDetails } from "./features/ConnectionDetails";
 import { RuleSources } from "./features/RuleSources";
@@ -69,7 +70,12 @@ function RulesPage(p: FeatureProps) {
 function SettingsPage(p: FeatureProps) {
   return (
     <>
-      <Settings config={p.snapshot.configuration} save={p.save} run={p.run} />
+      <Settings
+        config={p.snapshot.configuration}
+        save={p.save}
+        run={p.run}
+        busy={p.busy}
+      />
       {p.settingsContributions?.map((Component, index) => (
         <Component key={index} {...p} />
       ))}
@@ -79,7 +85,7 @@ function SettingsPage(p: FeatureProps) {
 function ConnectionsPage(p: FeatureProps) {
   return (
     <>
-      <h1>连接</h1>
+      <PageHeader title="连接" description="查看经过代理的连接、出口与流量。" />
       <Traffic
         traffic={p.snapshot.traffic}
         configuration={p.snapshot.configuration}

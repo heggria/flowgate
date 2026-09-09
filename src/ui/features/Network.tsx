@@ -1,3 +1,4 @@
+import { EmptyState, TaskError as NetworkError } from "../components";
 import { useState } from "react";
 import {
   Combobox,
@@ -31,7 +32,7 @@ export function Network({ snapshot, save, run, navigate }: FeatureProps) {
           ＋ 绑定网络
         </button>
       </PageHeader>
-      {draft.error ? <p role="alert">{draft.error}</p> : null}
+      <NetworkError message={draft.error} />
       <p>
         HTTP / SOCKS 外部代理可在节点页导入。已有网络接口可作为独立的 TCP / UDP
         出口。
@@ -40,7 +41,15 @@ export function Network({ snapshot, save, run, navigate }: FeatureProps) {
         </button>
       </p>
       {snapshot.networkConflicts?.map((issue) => (
-        <p key={issue.id} role="status" className="hint">
+        <p
+          key={issue.id}
+          role={issue.severity === "blocked" ? "alert" : "status"}
+          className={
+            issue.severity === "blocked"
+              ? "taskerror"
+              : "inlinestatus notice-warning"
+          }
+        >
           {issue.message}
         </p>
       ))}
@@ -178,9 +187,13 @@ export function Network({ snapshot, save, run, navigate }: FeatureProps) {
           </Modal>
         ) : null}
         {(c.externalNetworks ?? []).map((n) => (
-          <div className="entry" key={n.id}>
-            <strong>{n.name}</strong>
-            <code>{n.dnsServer}</code>
+          <div className="entry networkbinding" key={n.id}>
+            <div className="entrycopy">
+              <strong>{n.name}</strong>
+              <small>
+                <code>{n.dnsServer}</code>
+              </small>
+            </div>
             <ConfirmAction
               label="移除"
               title={`移除网络「${n.name}」？`}
@@ -210,9 +223,12 @@ export function Network({ snapshot, save, run, navigate }: FeatureProps) {
         ))}
       </section>
       {!snapshot.network ? (
-        <div className="empty">
-          正在读取本机网络状态，可使用右上角刷新重试。
-        </div>
+        <EmptyState
+          compact
+          icon="network"
+          title="正在读取网络状态"
+          description="可使用右上角刷新重试。"
+        />
       ) : (
         <>
           <section className="panel">

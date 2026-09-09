@@ -1,0 +1,10 @@
+[
+  {
+    "id": "builtin.kernel.singbox",
+    "name": "sing-box 内核适配",
+    "version": "1.0.0",
+    "capabilities": [],
+    "permissions": ["native.kernel.control"],
+    "contributions": ["command"]
+  }
+]

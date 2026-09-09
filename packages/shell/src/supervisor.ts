@@ -4,6 +4,7 @@ import { BUILD_VERSION } from "../../contracts/src/version";
 import { utilityProcess } from "electron";
 import { randomUUID } from "node:crypto";
 import type { RpcResponse } from "../../contracts/src/index";
+import { PausableTimers, type TimerTicket } from "./pausable-timers";
 let nextEpoch = Date.now();
 export class ProcessSupervisor {
   static readonly trace = new TraceBuffer(1000);
@@ -12,13 +13,77 @@ export class ProcessSupervisor {
   private session = "";
   private failures: number[] = [];
   private stopping = false;
+  private suspended = false;
+  private readonly timers = new PausableTimers();
+  private heartbeat?: NodeJS.Timeout;
+  private heartbeatRequest?: AbortController;
+  setSuspended(suspended: boolean) {
+    this.suspended = suspended;
+    this.notifyPower();
+    if (suspended) {
+      this.timers.pause();
+      this.stopHeartbeat();
+    } else {
+      this.timers.resume();
+      if (this.child) this.watchHealth(this.child);
+    }
+  }
+  private notifyPower() {
+    try {
+      this.child?.postMessage({
+        type: "power",
+        protocol: 1,
+        epoch: this.epoch,
+        session: this.session,
+        suspended: this.suspended,
+      });
+    } catch {
+      /* A concurrently exiting host is reconciled by its exit handler. */
+    }
+  }
+  private stopHeartbeat() {
+    clearTimeout(this.heartbeat);
+    this.heartbeat = undefined;
+    this.heartbeatRequest?.abort();
+    this.heartbeatRequest = undefined;
+  }
+  private watchHealth(child: Electron.UtilityProcess) {
+    clearTimeout(this.heartbeat);
+    if (this.suspended || this.stopping || this.child !== child) return;
+    this.heartbeat = setTimeout(async () => {
+      const controller = new AbortController();
+      this.heartbeatRequest = controller;
+      try {
+        await this.call(
+          "health",
+          undefined,
+          undefined,
+          controller.signal,
+          5000,
+        );
+      } catch {
+        if (!this.suspended && !this.stopping && this.child === child) {
+          ProcessSupervisor.trace.emit(this.name, "unresponsive", {
+            epoch: this.epoch,
+            releaseSet: this.environment.FLOWGATE_RELEASE ?? "bundled",
+          });
+          child.kill();
+        }
+      } finally {
+        if (this.heartbeatRequest === controller)
+          this.heartbeatRequest = undefined;
+        if (this.child === child) this.watchHealth(child);
+      }
+    }, 5000);
+    this.heartbeat.unref();
+  }
   private capabilityRequests = new Map<string, AbortController>();
   private pending = new Map<
     string,
     {
       resolve: (v: any) => void;
       reject: (e: Error) => void;
-      timer: NodeJS.Timeout;
+      timer: TimerTicket;
       cleanup: () => void;
     }
   >();
@@ -37,6 +102,7 @@ export class ProcessSupervisor {
     readonly environment: Record<string, string> = {},
   ) {}
   async start() {
+    this.stopHeartbeat();
     this.stopping = false;
     this.epoch = ++nextEpoch;
     this.session = randomUUID();
@@ -55,6 +121,7 @@ export class ProcessSupervisor {
       },
     });
     this.child = child;
+    this.notifyPower();
     child.on("message", async (data: any) => {
       if (data.epoch !== this.epoch) return;
       if (data.type === "trace" && data.session === this.session) {
@@ -134,7 +201,7 @@ export class ProcessSupervisor {
       if (data.protocol !== 1 || typeof data.id !== "string") return;
       const p = this.pending.get(data.id);
       if (!p) return;
-      clearTimeout(p.timer);
+      p.timer.cancel();
       p.cleanup();
       this.pending.delete(data.id);
       if (data.error)
@@ -147,6 +214,7 @@ export class ProcessSupervisor {
     });
     child.on("exit", () => {
       if (this.child !== child) return;
+      this.stopHeartbeat();
       this.child = undefined;
       ProcessSupervisor.trace.emit(
         this.name,
@@ -157,7 +225,7 @@ export class ProcessSupervisor {
         },
       );
       for (const p of this.pending.values()) {
-        clearTimeout(p.timer);
+        p.timer.cancel();
         p.cleanup();
         p.reject(
           Object.assign(new Error("服务退出，操作结果待核实"), {
@@ -172,6 +240,7 @@ export class ProcessSupervisor {
       if (!this.stopping) this.onFault(new Error(this.name + " exited"));
     });
     const health = await this.call("health");
+    this.watchHealth(child);
     ProcessSupervisor.trace.emit(this.name, "ready", {
       epoch: this.epoch,
       releaseSet: this.environment.FLOWGATE_RELEASE ?? "bundled",
@@ -193,6 +262,7 @@ export class ProcessSupervisor {
     payload?: unknown,
     operationId?: string,
     signal?: AbortSignal,
+    timeoutMs = 30000,
   ): Promise<T> {
     if (!this.child) return Promise.reject(new Error("服务未就绪"));
     if (signal?.aborted) return Promise.reject(new Error("请求已取消"));
@@ -241,7 +311,7 @@ export class ProcessSupervisor {
       const cancel = (message: string) => {
         if (!this.pending.has(id)) return;
         this.pending.delete(id);
-        clearTimeout(timer);
+        timer.cancel();
         cleanup();
         if (this.child === child)
           child.postMessage({
@@ -254,7 +324,10 @@ export class ProcessSupervisor {
         fail(Object.assign(new Error(message), { outcome: "unknown" }));
       };
       const abort = () => cancel("请求已取消；已提交操作的结果仍需核对");
-      const timer = setTimeout(() => cancel("请求超时，操作结果未知"), 30000);
+      const timer = this.timers.timeout(
+        () => cancel("请求超时，操作结果未知"),
+        timeoutMs,
+      );
       this.pending.set(id, { resolve: succeed, reject: fail, timer, cleanup });
       signal?.addEventListener("abort", abort, { once: true });
       child.postMessage({
@@ -271,6 +344,7 @@ export class ProcessSupervisor {
   }
 
   async stop(graceful = true) {
+    this.stopHeartbeat();
     this.stopping = true;
     ProcessSupervisor.trace.emit(this.name, "draining", {
       epoch: this.epoch,

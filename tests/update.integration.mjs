@@ -1,3 +1,4 @@
+import { egressFixture } from "./egress-fixture.mjs";
 import { isolateProxyPort } from "./proxy-fixture.mjs";
 import { _electron as electron } from "playwright";
 import { tufHandlers } from "@tufjs/repo-mock";
@@ -22,6 +23,12 @@ for (const variant of process.env.FLOWGATE_UPDATE_VARIANTS?.split(",") ?? [
   "service",
   "rollback",
   "apply",
+  "delayed-service",
+  "delayed-extension",
+  "delayed-gateway",
+  "delayed-renderer",
+  "unresponsive-service",
+  "egress",
 ]) {
   const work = await mkdtemp(resolve("work/update-" + variant + "-"));
   const fixture = join(work, "app");
@@ -36,12 +43,25 @@ for (const variant of process.env.FLOWGATE_UPDATE_VARIANTS?.split(",") ?? [
   const id = "test-" + variant + "-2";
   for (const name of await readdir("dist/release")) {
     let bytes = await readFile(join("dist/release", name));
-    if (name === (variant === "ui" ? "app.js" : "service.cjs"))
+    if (
+      name ===
+      (variant === "ui" || variant === "delayed-renderer"
+        ? "app.js"
+        : variant === "delayed-extension"
+          ? "extension.cjs"
+          : variant === "delayed-gateway"
+            ? "gateway.cjs"
+            : "service.cjs")
+    )
       bytes = Buffer.concat([
         Buffer.from(
           variant === "rollback"
             ? "if(process.env.FLOWGATE_PREFLIGHT!=='1')throw new Error('Injected startup failure');\n"
-            : "// independent update fixture\n",
+            : variant === "unresponsive-service"
+              ? "if(process.env.FLOWGATE_PREFLIGHT!=='1')setTimeout(()=>{while(true){}},4000);\n"
+              : variant.startsWith("delayed-") && variant !== "delayed-renderer"
+                ? "if(process.env.FLOWGATE_PREFLIGHT!=='1')setTimeout(()=>process.exit(17),4000);\n"
+                : "// independent update fixture\n",
         ),
         bytes,
       ]);
@@ -62,9 +82,14 @@ for (const variant of process.env.FLOWGATE_UPDATE_VARIANTS?.split(",") ?? [
     service: "service.cjs",
     extension: "extension.cjs",
     catalogVersion: 1,
-    builtins: JSON.parse(
-      await readFile("packages/contracts/src/builtin-catalog.json", "utf8"),
-    ).map(({ id, version, capabilities, permissions, contributions }) => ({
+    builtins: [
+      ...JSON.parse(
+        await readFile("packages/contracts/src/builtin-catalog.json", "utf8"),
+      ),
+      ...JSON.parse(
+        await readFile("packages/contracts/src/service-catalog.json", "utf8"),
+      ),
+    ].map(({ id, version, capabilities, permissions, contributions }) => ({
       id,
       version,
       capabilities,
@@ -135,17 +160,20 @@ for (const variant of process.env.FLOWGATE_UPDATE_VARIANTS?.split(",") ?? [
       targetUrl: base + "/targets/",
     }),
   );
-  const app = await electron.launch({
+  const realEgress = variant === "egress" ? await egressFixture() : undefined;
+  const launchOptions = {
     args: [fixture],
     env: {
       ...process.env,
+      ...(realEgress ? { FLOWGATE_INTERNAL_UPSTREAM: realEgress.url } : {}),
       NODE_EXTRA_CA_CERTS: cert,
       FLOWGATE_TEST_DATA: join(work, "userdata"),
       FLOWGATE_INTERNAL_TEST: "1",
       FLOWGATE_MODEL_TOKEN: "internal-update-fixture",
       FLOWGATE_STRESS_CHUNKS: "2000",
     },
-  });
+  };
+  let app = await electron.launch(launchOptions);
   try {
     // Trust only this isolated HTTPS fixture's certificate in Chromium networking.
     await app.evaluate(
@@ -163,7 +191,7 @@ for (const variant of process.env.FLOWGATE_UPDATE_VARIANTS?.split(",") ?? [
       },
       await readFile(cert, "utf8"),
     );
-    const page = await app.firstWindow();
+    let page = await app.firstWindow();
     await page
       .getByRole("heading", { name: "概览" })
       .waitFor({ timeout: 20000 });
@@ -171,6 +199,40 @@ for (const variant of process.env.FLOWGATE_UPDATE_VARIANTS?.split(",") ?? [
     const before = await page.evaluate(() =>
       window.flowgate.request("snapshot"),
     );
+    if (realEgress) {
+      await page.evaluate(async (proxyPort) => {
+        await window.flowgate.request(
+          "subscription.import",
+          {
+            text: JSON.stringify({
+              outbounds: [
+                {
+                  type: "http",
+                  tag: "gateway-route",
+                  server: "127.0.0.1",
+                  server_port: proxyPort,
+                },
+              ],
+            }),
+          },
+          "egress-import",
+        );
+        const snapshot = await window.flowgate.request("snapshot");
+        await window.flowgate.request(
+          "configuration.save",
+          {
+            revision: snapshot.configuration.revision,
+            rules: [],
+            settings: {
+              ...snapshot.configuration.settings,
+              selectedNode: snapshot.configuration.nodes[0].id,
+              finalOutbound: "select",
+            },
+          },
+          "egress-select",
+        );
+      }, realEgress.proxyPort);
+    }
     await page.evaluate(async () => {
       const state = await window.flowgate.request("snapshot");
       await window.flowgate.request(
@@ -198,6 +260,7 @@ for (const variant of process.env.FLOWGATE_UPDATE_VARIANTS?.split(",") ?? [
         .getByRole("navigation")
         .getByRole("button", { name: "扩展", exact: true })
         .click();
+      await page.getByRole("button", { name: "管理更新", exact: true }).click();
       await page.getByRole("button", { name: "检查更新", exact: true }).click();
       await page
         .getByRole("region", { name: "候选版本详情" })
@@ -216,7 +279,13 @@ for (const variant of process.env.FLOWGATE_UPDATE_VARIANTS?.split(",") ?? [
         headers: { authorization: "Bearer internal-update-fixture" },
       },
     );
-    assert.equal(streamResponse.status, 200);
+    assert.equal(
+      streamResponse.status,
+      200,
+      JSON.stringify(
+        await page.evaluate(() => window.shell.request("gateway.status")),
+      ),
+    );
     let streamBytes = 0;
     const reading = (async () => {
       for await (const chunk of streamResponse.body)
@@ -292,6 +361,94 @@ for (const variant of process.env.FLOWGATE_UPDATE_VARIANTS?.split(",") ?? [
       JSON.stringify({ variant, gatewayBefore, gatewayAfter }),
     );
     if (variant === "ui") assert.equal(gatewayAfter.port, gatewayBefore.port);
+    if (variant === "ui" || variant === "service") {
+      const trace = await page.evaluate(() =>
+        window.shell.request("diagnostics.trace"),
+      );
+      const stoppedUI = trace.find(
+        (e) =>
+          e.name === "Renderer:overview" &&
+          e.status === "stopped" &&
+          e.context.releaseSet === "bundled",
+      );
+      const readyUI = trace.find(
+        (e) =>
+          e.name === "Renderer:overview" &&
+          e.status === "ready" &&
+          e.context.releaseSet === id,
+      );
+      assert.ok(stoppedUI, "old UI module records release before navigation");
+      assert.ok(
+        readyUI,
+        "new UI records its own Release Set even when the old Service stays running",
+      );
+      assert.notEqual(
+        stoppedUI.context.pluginInstance,
+        readyUI.context.pluginInstance,
+      );
+      assert.notEqual(stoppedUI.context.epoch, readyUI.context.epoch);
+      assert.ok(Number.isSafeInteger(readyUI.context.configRevision));
+      assert.ok(readyUI.context.moduleVersions.overview);
+    }
+    if (variant.startsWith("delayed-") || variant === "unresponsive-service") {
+      assert.equal(
+        (await page.evaluate(() => window.shell.request("release.status")))
+          .current,
+        id,
+        "candidate must activate successfully before the injected runtime failure",
+      );
+      const deadline = Date.now() + 50000;
+      let reverted = false,
+        rendererCrashes = 0,
+        nextCrash = Date.now();
+      while (Date.now() < deadline) {
+        if (
+          variant === "delayed-renderer" &&
+          rendererCrashes < 3 &&
+          Date.now() >= nextCrash
+        ) {
+          const replacement = app.waitForEvent("window", { timeout: 15000 });
+          await app.evaluate(({ BrowserWindow }) =>
+            BrowserWindow.getAllWindows()[0]?.webContents.forcefullyCrashRenderer(),
+          );
+          page = await replacement;
+          await page
+            .getByRole("heading", { name: "概览" })
+            .waitFor({ timeout: 15000 });
+          rendererCrashes++;
+          nextCrash = Date.now() + 1500;
+        }
+        try {
+          page = app.windows().at(-1);
+          const state = await page.evaluate(() =>
+            window.shell.request("release.status"),
+          );
+          if (
+            !state.updating &&
+            state.current === null &&
+            state.quarantine.includes(id)
+          ) {
+            await page
+              .getByRole("heading", { name: "概览" })
+              .waitFor({ timeout: 5000 });
+            reverted = true;
+            break;
+          }
+        } catch {}
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      }
+      assert.equal(
+        reverted,
+        true,
+        "runtime crash loop must quarantine and restore bundled UI and hosts: " +
+          (await page.locator("body").innerText()),
+      );
+      const persisted = JSON.parse(
+        await readFile(join(work, "userdata/releases/state.json"), "utf8"),
+      );
+      assert.equal(persisted.current, null);
+      assert.ok(persisted.quarantine.includes(id));
+    }
     const status = await page.evaluate(() =>
       window.shell.request("release.status"),
     );
@@ -317,7 +474,11 @@ for (const variant of process.env.FLOWGATE_UPDATE_VARIANTS?.split(",") ?? [
     if (variant === "ui") {
       assert.equal(after.epoch, before.epoch);
       assert.equal(status.current, id);
-    } else if (variant === "service" || variant === "apply") {
+    } else if (
+      variant === "service" ||
+      variant === "apply" ||
+      variant === "egress"
+    ) {
       assert.notEqual(after.epoch, before.epoch);
       assert.equal(status.current, id);
     } else {
@@ -348,13 +509,75 @@ for (const variant of process.env.FLOWGATE_UPDATE_VARIANTS?.split(",") ?? [
         "retry must not apply twice",
       );
     }
-    results.push({ variant, passed: true });
+    if (realEgress) {
+      assert.equal(
+        streamResponse.headers.get("x-egress-id"),
+        "flowgate.policy",
+      );
+      assert.equal(
+        Number(streamResponse.headers.get("x-config-revision")),
+        after.configuration.revision,
+      );
+      assert.equal(realEgress.metrics.proxyRequests, 1);
+      assert.equal(realEgress.metrics.upstreamRequests, 1);
+      const url = `http://127.0.0.1:${gatewayAfter.port}/v1/mock`;
+      const init = {
+        method: "POST",
+        headers: { authorization: "Bearer internal-update-fixture" },
+      };
+      const cancellation = await fetch(url, init);
+      const reader = cancellation.body.getReader();
+      await reader.read();
+      await reader.cancel();
+      for (let i = 0; i < 100 && realEgress.metrics.upstreamAborts === 0; i++)
+        await new Promise((r) => setTimeout(r, 20));
+      assert.equal(
+        realEgress.metrics.upstreamAborts,
+        1,
+        "client cancel must close the selected upstream path",
+      );
+      const beforeFailure = realEgress.metrics.upstreamRequests;
+      realEgress.metrics.online = false;
+      const failed = await fetch(url, init);
+      assert.equal(failed.status, 502);
+      await failed.text();
+      assert.equal(
+        realEgress.metrics.upstreamRequests,
+        beforeFailure,
+        "failed selected proxy must not fall back directly",
+      );
+    }
+    results.push({
+      variant,
+      passed: true,
+      ...(realEgress ? { egress: realEgress.metrics } : {}),
+    });
     await page.evaluate(() =>
       window.flowgate.request("proxy.disconnect", {}, crypto.randomUUID()),
     );
+    if (variant === "delayed-service") {
+      await app.close();
+      app = await electron.launch(launchOptions);
+      page = await app.firstWindow();
+      await page
+        .getByRole("heading", { name: "概览" })
+        .waitFor({ timeout: 20000 });
+      const restarted = await page.evaluate(() =>
+        window.shell.request("release.status"),
+      );
+      assert.equal(restarted.current, null);
+      assert.ok(restarted.quarantine.includes(id));
+      await assert.rejects(
+        page.evaluate(
+          (id) => window.shell.request("release.activate", { id }),
+          id,
+        ),
+      );
+    }
   } finally {
     await app.close();
     await new Promise((r) => server.close(r));
+    await realEgress?.close();
   }
 }
 await writeFile(

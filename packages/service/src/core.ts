@@ -1,3 +1,6 @@
+import type { RuntimeModule } from "../../runtime/src/lifecycle";
+import { KernelRuntime, singBoxAdapter } from "./kernel/adapter";
+import { networkPath } from "../../domain/src/network-path";
 import { requestTrace } from "../../runtime/src/trace-context";
 import { measureOutbound, type NodeMeasurement } from "./kernel/measurement";
 import { readHandoff, writeHandoff } from "./handoff";
@@ -11,11 +14,11 @@ import type {
   NetworkState,
   NodeConfig,
   Operation,
+  KernelState,
   Rule,
   RuleSource,
 } from "../../contracts/src/index";
 import {
-  compileConfiguration,
   explainRoute,
   validateConfiguration,
 } from "../../domain/src/configuration";
@@ -90,15 +93,17 @@ export class ServiceCore {
       await this.readExtensions();
     });
   }
+  readonly native: KernelRuntime;
   private readonly networkObserver: NetworkObserver;
   lifecycle: AppSnapshot["lifecycle"] = "starting";
   network: NetworkState | null = null;
+  private networkCoordination: Promise<unknown> = Promise.resolve();
   private measurements = new Map<string, NodeMeasurement>();
   private measuring = new Map<string, AbortController>();
   private moduleInfo: AppSnapshot["modules"] = [];
   constructor(
     readonly store: StateStore,
-    readonly native: NativePort,
+    native: NativePort,
     readonly extension: (
       method: string,
       payload?: unknown,
@@ -107,11 +112,38 @@ export class ServiceCore {
     readonly releaseSet: string,
     readonly telemetry?: KernelTelemetry,
     readonly version = BUILD_VERSION,
+    adapterFactory: (native: NativePort) => RuntimeModule = singBoxAdapter,
   ) {
+    const bootstrapTrace = randomUUID().replaceAll("-", "");
+    this.native = new KernelRuntime(adapterFactory(native), () => ({
+      operationId: "service-" + store.epoch,
+      traceId: bootstrapTrace,
+      ...requestTrace.getStore(),
+      releaseSet,
+      serviceVersion: version,
+      epoch: store.epoch,
+      configRevision: store.configuration.revision,
+      shellVersion: BUILD_VERSION,
+      hostVersion: version,
+      protocolVersion: 1,
+      schemaVersion: 1,
+    }));
     this.networkObserver = new NetworkObserver(
       async () => (await this.extension("network.inspect")) as NetworkState,
       (state) => {
+        const previous = this.network;
         this.network = state;
+        if (previous && state) {
+          this.networkCoordination = this.networkCoordination
+            .catch(() => {})
+            .then(() => this.coordinateNetwork(previous, state))
+            .catch(() => {
+              if (this.network === state)
+                state.warnings.push(
+                  "网络变化后的连接协调失败，请核对当前连接状态后重试。",
+                );
+            });
+        }
       },
       () => {
         if (this.network)
@@ -127,21 +159,50 @@ export class ServiceCore {
       },
     );
   }
+  private async coordinateNetwork(previous: NetworkState, state: NetworkState) {
+    if (this.lifecycle !== "ready" || this.network !== state) return;
+    const kernel = await this.native.status();
+    const own = kernel.tunInterface;
+    if (networkPath(previous, own) === networkPath(state, own)) return;
+    for (const controller of this.measuring.values()) controller.abort();
+    this.measurements.clear();
+    if (kernel.status !== "running" || this.hasUnknownNative()) return;
+    if (kernel.appliedRevision !== this.store.configuration.revision) {
+      state.warnings.push(
+        "网络已变化，当前有尚未应用的配置；请确认配置后重新连接。",
+      );
+      return;
+    }
+    const conflicts = networkConflicts(this.store.configuration, state, kernel);
+    const blocked = conflicts.filter((c) => c.severity === "blocked");
+    const id = "network-" + randomUUID();
+    // Reuse the same serialized, persisted native operation path as user changes.
+    // Never reclaim proxy settings after another application has taken ownership.
+    await this.request(
+      blocked.length ? "proxy.disconnect" : "proxy.connect",
+      {
+        networkExpectedOperation: kernel.operationId ?? null,
+        networkExpectedRevision: kernel.appliedRevision,
+      },
+      id,
+    );
+    (this.network ?? state).warnings.push(
+      blocked.length
+        ? "检测到网络冲突，已停止本应用连接并按所有权恢复设置。解决冲突后请重新连接。"
+        : "网络路径已变化，已用当前已应用配置重新建立本应用连接。",
+    );
+  }
   async start() {
     await this.store.start();
+    try {
+      await this.native.start();
+    } catch (error) {
+      await this.store.close();
+      throw error;
+    }
     await readHandoff(this.store.directory, this.store.configuration.revision);
     const kernel = await this.native.status();
-    for (const o of this.store.operations) {
-      if (
-        o.state === "unknown" &&
-        o.kind === "proxy.connect" &&
-        kernel.appliedRevision === o.revision &&
-        kernel.operationId === o.id
-      ) {
-        o.state = "succeeded";
-        o.completedAt = new Date().toISOString();
-      }
-    }
+    await this.reconcileNative(kernel);
     await this.store.persist();
     // Only Service owns the durable preferences; the replacement host starts core packages first.
     try {
@@ -177,6 +238,33 @@ export class ServiceCore {
       ).catch(() => {});
     }
   }
+  private async reconcileNative(kernel?: KernelState) {
+    if (!this.hasUnknownNative()) return;
+    kernel ??= await this.native.status();
+    let changed = false;
+    for (const o of this.store.operations) {
+      if (
+        o.state === "unknown" &&
+        kernel.operationId === o.id &&
+        ((o.kind === "proxy.connect" &&
+          kernel.status === "running" &&
+          kernel.appliedRevision === o.revision) ||
+          (o.kind === "proxy.disconnect" && kernel.status === "stopped"))
+      ) {
+        o.state = "succeeded";
+        o.completedAt = new Date().toISOString();
+        changed = true;
+      }
+    }
+    if (changed) await this.store.persist();
+  }
+  private hasUnknownNative() {
+    return this.store.operations.some(
+      (o) =>
+        o.state === "unknown" &&
+        ["proxy.connect", "proxy.disconnect"].includes(o.kind),
+    );
+  }
   async snapshot(): Promise<AppSnapshot> {
     await this.readExtensions();
     if (this.telemetry && this.native.control)
@@ -204,7 +292,7 @@ export class ServiceCore {
       operations: this.store.operations.slice(-30).reverse(),
       network: this.network,
       nodeMeasurements: [...this.measurements.values()],
-      modules: this.moduleInfo,
+      modules: [...(this.moduleInfo ?? []), this.native.snapshot()],
       serviceVersion: this.version,
     };
   }
@@ -271,6 +359,7 @@ export class ServiceCore {
     }
     if (method === "network.refresh") {
       await this.networkObserver.refresh();
+      await this.networkCoordination;
       return this.snapshot();
     }
     if (method === "policy.explain")
@@ -279,8 +368,12 @@ export class ServiceCore {
         String(payload?.target ?? ""),
       );
 
-    if (method === "operation.get")
-      return this.store.operations.find((o) => o.id === payload?.id) ?? null;
+    if (method === "operation.get") {
+      return this.store.transact(async () => {
+        await this.reconcileNative();
+        return this.store.operations.find((o) => o.id === payload?.id) ?? null;
+      });
+    }
     if (!operationId) throw new Error("写操作需要 operationId");
     const allowed = [
       "extensions.setEnabled",
@@ -301,9 +394,28 @@ export class ServiceCore {
     if (!allowed.includes(method)) throw new Error("不支持的命令");
     return this.store.transact(async () => {
       signal?.throwIfAborted();
+      await this.reconcileNative();
       const previous = this.store.operations.find((o) => o.id === operationId);
       if (previous)
         return { operation: previous, snapshot: await this.snapshot() };
+      if (
+        ["proxy.connect", "proxy.disconnect"].includes(method) &&
+        this.hasUnknownNative()
+      )
+        throw Object.assign(new Error("原生操作结果尚未明确，请稍后核对"), {
+          outcome: "unknown",
+        });
+      if (payload?.networkExpectedRevision !== undefined) {
+        const current = await this.native.status();
+        if (
+          this.lifecycle !== "ready" ||
+          current.status !== "running" ||
+          (current.operationId ?? null) !== payload.networkExpectedOperation ||
+          current.appliedRevision !== payload.networkExpectedRevision ||
+          this.store.configuration.revision !== payload.networkExpectedRevision
+        )
+          return;
+      }
       const operation: Operation = {
         id: operationId,
         traceId:
@@ -374,8 +486,27 @@ export class ServiceCore {
             !(await this.native.status()).systemControl
           )
             throw new Error("请先安装并批准已签名的系统辅助服务");
+          if (
+            this.store.configuration.settings.mode !== "manual" ||
+            (this.store.configuration.externalNetworks ?? []).length
+          ) {
+            const observed = (await this.extension(
+              "network.inspect",
+            )) as NetworkState;
+            if (!observed || !Array.isArray(observed.interfaces))
+              throw new Error("无法确认外部网络状态，暂不接管系统网络");
+            this.network = observed;
+            const conflicts = networkConflicts(
+              this.store.configuration,
+              observed,
+              await this.native.status(),
+            );
+            const blocked = conflicts.filter((c) => c.severity === "blocked");
+            if (blocked.length)
+              throw new Error(blocked.map((c) => c.message).join("\n"));
+          }
           await this.native.apply(
-            compileConfiguration(this.store.configuration),
+            await this.native.compile(this.store.configuration),
             this.store.configuration.revision,
             operationId,
             this.store.configuration.settings.mode,
@@ -618,31 +749,90 @@ export class ServiceCore {
       }
     });
   }
+  async preflight() {
+    await this.store.start(true);
+    await this.native.start();
+    await this.native.compile(this.store.configuration);
+    this.lifecycle = "ready";
+  }
   async drain() {
     this.lifecycle = "draining";
     this.networkObserver.stop();
     for (const controller of this.measuring.values()) controller.abort();
     await this.store.drain();
-    await writeHandoff(this.store.directory, {
-      version: 1,
-      protocol: 1,
-      schema: 1,
-      releaseSet: this.releaseSet,
-      epoch: this.store.epoch,
-      revision: this.store.configuration.revision,
-      pendingOperationIds: this.store.operations
-        .filter(
-          (operation) =>
-            operation.state === "pending" || operation.state === "unknown",
-        )
-        .map((operation) => operation.id),
-      at: new Date().toISOString(),
-    });
+    try {
+      await this.reconcileNative();
+      if (this.hasUnknownNative())
+        throw Object.assign(new Error("原生操作结果尚未明确，已延后更新"), {
+          outcome: "unknown",
+        });
+      await this.native.drain(Date.now() + 5000);
+      await writeHandoff(this.store.directory, {
+        version: 1,
+        protocol: 1,
+        schema: 1,
+        releaseSet: this.releaseSet,
+        epoch: this.store.epoch,
+        revision: this.store.configuration.revision,
+        pendingOperationIds: this.store.operations
+          .filter(
+            (operation) =>
+              operation.state === "pending" || operation.state === "unknown",
+          )
+          .map((operation) => operation.id),
+        at: new Date().toISOString(),
+      });
+    } catch (error) {
+      this.store.resume();
+      this.native.resume();
+      this.lifecycle = "ready";
+      this.networkObserver.resume();
+      throw error;
+    }
   }
   async stop() {
     await this.drain();
     this.telemetry?.close();
     await this.store.close();
+    await this.native.dispose();
     this.lifecycle = "stopped";
+  }
+  suspend() {
+    this.store.pause();
+    this.lifecycle = "draining";
+    this.networkObserver.stop();
+    for (const controller of this.measuring.values()) controller.abort();
+  }
+  async resume() {
+    await this.store.drain();
+    await this.reconcileNative();
+    this.networkObserver.resume();
+    await this.networkObserver.refresh().catch(() => {});
+    this.store.resume();
+    this.native.resume();
+    this.lifecycle = "ready";
+  }
+  async resolveEgress(target: string) {
+    const url = new URL(target);
+    if (
+      !["http:", "https:"].includes(url.protocol) ||
+      url.username ||
+      url.password
+    )
+      throw new Error("内部上游地址无效");
+    const kernel = await this.native.status();
+    if (
+      kernel.status !== "running" ||
+      kernel.appliedRevision !== this.store.configuration.revision ||
+      this.store.configuration.settings.mode === "tun" ||
+      this.hasUnknownNative()
+    )
+      throw new Error("所选代理策略尚未稳定应用，拒绝绕路访问上游");
+    return {
+      id: "flowgate.policy",
+      proxyUrl: `http://127.0.0.1:${this.store.configuration.settings.listenPort}`,
+      allowedOrigins: [url.origin],
+      configurationRevision: kernel.appliedRevision,
+    };
   }
 }

@@ -1,3 +1,4 @@
+import { SearchField, Combobox, EmptyState } from "../components";
 import { useState, useRef, useEffect, useId } from "react";
 import type {
   TrafficSnapshot,
@@ -81,22 +82,22 @@ export function Traffic({
       </div>
       {!compact ? (
         <div className="tabletools">
-          <select
-            aria-label="连接排序"
-            value={sort}
-            onChange={(event) => setSort(event.target.value)}
-          >
-            <option value="recent">最近连接</option>
-            <option value="download">下载量</option>
-            <option value="upload">上传量</option>
-            <option value="target">目标名称</option>
-          </select>
-          <Icon name="search" />
-          <input
-            aria-label="搜索连接"
+          <SearchField
+            label="搜索连接"
             placeholder="搜索域名、出口或协议"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={setQuery}
+          />
+          <Combobox
+            label="连接排序"
+            value={sort}
+            options={[
+              { value: "recent", label: "最近连接" },
+              { value: "download", label: "下载量" },
+              { value: "upload", label: "上传量" },
+              { value: "target", label: "目标名称" },
+            ]}
+            onChange={setSort}
           />
         </div>
       ) : null}
@@ -147,16 +148,18 @@ export function Traffic({
         </table>
       </div>
       {!rows.length ? (
-        <div className="tableempty">
-          <Icon name="connections" size={25} />
-          <strong>{query || active ? "没有匹配的连接" : "暂无连接"}</strong>
-          <span>
-            {query || active
+        <EmptyState
+          compact
+          icon="connections"
+          title={query || active ? "没有匹配的连接" : "暂无连接"}
+          description={
+            query || active
               ? "调整筛选条件"
               : traffic?.available
                 ? "等待应用流量经过代理"
-                : "启动代理后，连接将在这里显示"}
-          </span>
+                : "启动代理后，连接将在这里显示"
+          }
+        >
           {query || active ? (
             <button
               className="textbutton"
@@ -168,7 +171,7 @@ export function Traffic({
               清除筛选
             </button>
           ) : null}
-        </div>
+        </EmptyState>
       ) : null}
       {current ? (
         <div

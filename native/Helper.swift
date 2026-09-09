@@ -4,21 +4,36 @@ import Darwin
 final class HelperSession: NSObject, FlowGateHelperProtocol {
     let engine: NetworkEngine
     let queue: DispatchQueue
+    let lease: SessionLease
+    let generation: UInt64
     var monitor: DispatchSourceTimer?
-    init(engine: NetworkEngine, queue: DispatchQueue) {
-        self.engine = engine; self.queue=queue
+    init(engine: NetworkEngine, queue: DispatchQueue, lease: SessionLease, generation: UInt64) {
+        self.engine = engine; self.queue=queue; self.lease=lease; self.generation=generation
         super.init()
         let timer=DispatchSource.makeTimerSource(queue:queue);timer.schedule(deadline:.now()+1,repeating:1)
-        timer.setEventHandler { [weak self] in self?.engine.reconcile() };timer.resume();monitor=timer
+        timer.setEventHandler { [weak self] in
+            guard let self = self, self.lease.isActive(self.generation) else { return }
+            self.engine.reconcile()
+        };timer.resume();monitor=timer
     }
-    func request(_ data: Data, reply: @escaping (Data) -> Void) { queue.async { reply(self.engine.request(data)) } }
-    func cleanup(attempt: Int = 0) {
+    func request(_ data: Data, reply: @escaping (Data) -> Void) { queue.async {
+        guard self.lease.isActive(self.generation) else {
+            let request = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            reply((try? JSONSerialization.data(withJSONObject: ["id": request?["id"] as? String ?? "", "error": "原生会话已结束"])) ?? Data())
+            return
+        }
+        reply(self.engine.request(data))
+    } }
+    func cleanup(attempt: Int = 0, completed: @escaping () -> Void) {
         monitor?.cancel()
         queue.async {
-            do { try self.engine.stop() }
+            guard self.lease.beginCleanup(self.generation) else { return }
+            do {
+                if try self.lease.cleanup(self.generation, restore: { try self.engine.stop() }) { completed() }
+            }
             catch {
                 self.engine.lastError = "会话已结束，系统设置恢复待重试"
-                if attempt < 3 { self.queue.asyncAfter(deadline: .now() + Double(attempt + 1)) { self.cleanup(attempt: attempt + 1) } }
+                if attempt < 3 { self.queue.asyncAfter(deadline: .now() + Double(attempt + 1)) { self.cleanup(attempt: attempt + 1, completed: completed) } }
             }
         }
     }
@@ -26,14 +41,20 @@ final class HelperSession: NSObject, FlowGateHelperProtocol {
 final class HelperDelegate: NSObject, NSXPCListenerDelegate {
     let engine: NetworkEngine
     var active: NSXPCConnection?
+    let lease = SessionLease()
     let queue=DispatchQueue(label:"com.flowgate.helper.writer")
     init(engine: NetworkEngine) { self.engine = engine }
     func listener(_ listener: NSXPCListener, shouldAcceptNewConnection connection: NSXPCConnection) -> Bool {
-        guard active == nil else { return false }
-        let session = HelperSession(engine: engine, queue: queue)
+        let session: HelperSession? = queue.sync {
+            guard active == nil, let generation = lease.acquire() else { return nil }
+            active = connection
+            return HelperSession(engine: engine, queue: queue, lease: lease, generation: generation)
+        }
+        guard let session = session else { return false }
         connection.exportedInterface = NSXPCInterface(with: FlowGateHelperProtocol.self); connection.exportedObject = session
-        active = connection
-        connection.invalidationHandler = { [weak self] in session.cleanup(); self?.active = nil }
+        connection.invalidationHandler = { [weak self, weak connection] in
+            session.cleanup { if self?.active === connection { self?.active = nil } }
+        }
         connection.interruptionHandler = { connection.invalidate() }
         connection.resume(); return true
     }

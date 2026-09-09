@@ -1,3 +1,8 @@
+import {
+  PausableTimers,
+  type TimerTicket,
+} from "../../runtime/src/pausable-timers";
+import serviceCatalog from "../../contracts/src/service-catalog.json";
 import { requestTrace } from "../../runtime/src/trace-context";
 import { RequestScope } from "../../runtime/src/request-scope";
 import { randomUUID } from "node:crypto";
@@ -8,12 +13,13 @@ import { assertRequest, type KernelState } from "../../contracts/src/index";
 const port = (process as any).parentPort;
 const epoch = Number(process.env.FLOWGATE_EPOCH),
   session = process.env.FLOWGATE_SESSION!;
+const capabilityTimers = new PausableTimers();
 const pending = new Map<
   string,
   {
     resolve: (v: any) => void;
     reject: (e: Error) => void;
-    timer: NodeJS.Timeout;
+    timer: TimerTicket;
     cleanup: () => void;
   }
 >();
@@ -25,7 +31,7 @@ function capability(
   if (signal?.aborted) return Promise.reject(new Error("请求已取消"));
   return new Promise((resolve, reject) => {
     const id = randomUUID();
-    const timer = setTimeout(() => {
+    const timer = capabilityTimers.timeout(() => {
       pending.delete(id);
       cleanup();
       reject(
@@ -37,7 +43,7 @@ function capability(
     const abort = () => {
       if (!pending.has(id)) return;
       pending.delete(id);
-      clearTimeout(timer);
+      timer.cancel();
       cleanup();
       port.postMessage({
         type: "capability.cancel",
@@ -63,6 +69,25 @@ function capability(
     });
   });
 }
+if (process.env.FLOWGATE_EXPECTED_SERVICE_MODULES) {
+  const expected = JSON.parse(process.env.FLOWGATE_EXPECTED_SERVICE_MODULES);
+  if (
+    serviceCatalog.some((entry) => {
+      const declared = expected.find(
+        (item: { id: string }) => item.id === entry.id,
+      );
+      return (
+        declared?.version !== entry.version ||
+        ["permissions", "capabilities", "contributions"].some(
+          (key) =>
+            JSON.stringify([...(declared?.[key] ?? [])].sort()) !==
+            JSON.stringify([...entry[key as "permissions"]].sort()),
+        )
+      );
+    })
+  )
+    throw new Error("运行 Service 模块与受信清单不一致");
+}
 const core = new ServiceCore(
   new StateStore(process.env.FLOWGATE_DATA!, epoch),
   {
@@ -78,15 +103,29 @@ const core = new ServiceCore(
   new KernelTelemetry(),
   process.env.FLOWGATE_HOST_VERSION,
 );
+core.native.modules.trace.onChange = () =>
+  port.postMessage({
+    type: "trace",
+    epoch,
+    session,
+    event: core.native.modules.trace.snapshot().at(-1),
+  });
 const ready =
-  process.env.FLOWGATE_PREFLIGHT === "1"
-    ? core.store.start(true).then(() => {
-        core.lifecycle = "ready";
-      })
-    : core.start();
+  process.env.FLOWGATE_PREFLIGHT === "1" ? core.preflight() : core.start();
 ready.catch(() => {});
 const requests = new RequestScope();
 port.on("message", async ({ data }: any) => {
+  if (data?.type === "power") {
+    if (
+      data.protocol === 1 &&
+      data.epoch === epoch &&
+      data.session === session
+    ) {
+      if (data.suspended === true) capabilityTimers.pause();
+      else if (data.suspended === false) capabilityTimers.resume();
+    }
+    return;
+  }
   if (data?.type === "cancel") {
     if (data.protocol === 1 && data.session === session && data.epoch === epoch)
       requests.cancel(data.id);
@@ -95,7 +134,7 @@ port.on("message", async ({ data }: any) => {
   if (data?.type === "capability.result") {
     const p = pending.get(data.id);
     if (!p) return;
-    clearTimeout(p.timer);
+    p.timer.cancel();
     p.cleanup();
     pending.delete(data.id);
     if (data.error)
@@ -112,7 +151,17 @@ port.on("message", async ({ data }: any) => {
     if (data.epoch !== epoch || data.session !== session) return;
     await ready;
     let result;
-    if (data.method === "drain") {
+    if (data.method === "egress.resolve") {
+      const target = (data.payload as { target?: unknown })?.target;
+      if (typeof target !== "string") throw new Error("Missing egress target");
+      result = await core.resolveEgress(target);
+    } else if (data.method === "power.suspend") {
+      core.suspend();
+      result = { suspended: true };
+    } else if (data.method === "power.resume") {
+      await core.resume();
+      result = { resumed: true };
+    } else if (data.method === "drain") {
       await core.drain();
       result = { drained: true };
     } else if (data.method === "stop") {

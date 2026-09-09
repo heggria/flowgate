@@ -16,7 +16,10 @@ import {
   pendingCount,
   subscribePending,
 } from "../../packages/client/src/index";
-import { ModuleRuntime } from "../../packages/runtime/src/lifecycle";
+import {
+  ModuleRuntime,
+  TraceBuffer,
+} from "../../packages/runtime/src/lifecycle";
 import {
   modules,
   type CommandContribution,
@@ -79,6 +82,7 @@ function App({ routes }: { routes: RouteContribution[] }) {
     let mounted = true;
     const update = (s: AppSnapshot) => {
       if (mounted) {
+        latestSnapshot = s;
         setSnapshot(s);
         void window.shell.request("ui.ready");
       }
@@ -200,6 +204,8 @@ function App({ routes }: { routes: RouteContribution[] }) {
             .map((r) => (
               <button
                 key={r.id}
+                aria-label={r.label}
+                title={r.label}
                 aria-current={page === r.id ? "page" : undefined}
                 className={`nav ${page === r.id ? "active" : ""} ${r.id === "settings" ? "settingsnav" : ""}`}
                 onClick={() => {
@@ -285,7 +291,7 @@ function App({ routes }: { routes: RouteContribution[] }) {
           </div>
         </header>
         {error ? (
-          <div role="alert" className="alert">
+          <div role="alert" className="alert alert-error">
             {error}
             <button aria-label="关闭错误" onClick={() => setError("")}>
               <Icon name="close" size={14} />
@@ -356,15 +362,53 @@ function App({ routes }: { routes: RouteContribution[] }) {
     </div>
   );
 }
-const runtime = new ModuleRuntime();
-void runtime
-  .activate(modules)
-  .then(() =>
-    createRoot(document.getElementById("root")!).render(
-      <App
-        routes={runtime.entries
-          .filter((e) => e.kind === "route")
-          .map((e) => e.value as RouteContribution)}
-      />,
-    ),
+let latestSnapshot: AppSnapshot;
+let rendererContext: import("../../packages/contracts/src/index").TraceContext;
+const runtime = new ModuleRuntime(new TraceBuffer(), () => ({
+  ...rendererContext,
+  configRevision: latestSnapshot?.configuration.revision,
+  serviceVersion: latestSnapshot?.serviceVersion,
+  serviceEpoch: latestSnapshot?.epoch,
+}));
+let traceFlush = Promise.resolve();
+runtime.trace.onChange = () => {
+  const event = runtime.trace.snapshot().at(-1)!;
+  traceFlush = traceFlush
+    .catch(() => {})
+    .then(async () => {
+      await window.shell.request("ui.trace", event);
+    });
+};
+const workspaceRoot = createRoot(document.getElementById("root")!);
+workspaceRoot.render(
+  <div className="empty loadingstate" role="status">
+    <span className="loadingring" />
+    正在连接服务…
+  </div>,
+);
+void (async () => {
+  [latestSnapshot, rendererContext] = await Promise.all([
+    client.request<AppSnapshot>("snapshot"),
+    window.shell.request("ui.context") as Promise<
+      import("../../packages/contracts/src/index").TraceContext
+    >,
+  ]);
+  await runtime.activate(modules);
+  window.shell.setReleaseHandler?.(async () => {
+    await runtime.stop();
+    await traceFlush;
+  });
+  workspaceRoot.render(
+    <App
+      routes={runtime.entries
+        .filter((e) => e.kind === "route")
+        .map((e) => e.value as RouteContribution)}
+    />,
   );
+})().catch(() => {
+  workspaceRoot.render(
+    <div className="empty" role="alert">
+      工作区启动失败，请重新打开应用或使用恢复页面。
+    </div>,
+  );
+});

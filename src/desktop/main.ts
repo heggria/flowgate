@@ -1,4 +1,5 @@
 import { DiagnosticTrace } from "../../packages/shell/src/diagnostic-trace";
+import { cleanupStages } from "../../packages/shell/src/cleanup";
 import { deepLinkRoute } from "../../packages/shell/src/deep-link";
 import { CredentialVault } from "../../packages/shell/src/credential-vault";
 import { UpdateTrace } from "../../packages/shell/src/update-trace";
@@ -27,6 +28,9 @@ let vault: CredentialVault;
 let gateway: ProcessSupervisor | undefined;
 let gatewayEnabled = false;
 const internalGatewayAvailable = process.env.FLOWGATE_INTERNAL_TEST === "1";
+const internalUpstream = internalGatewayAvailable
+  ? process.env.FLOWGATE_INTERNAL_UPSTREAM
+  : undefined;
 const gatewayToken = process.env.FLOWGATE_MODEL_TOKEN ?? randomUUID();
 async function startGateway(directory: string, manifest?: ReleaseSet) {
   if (!internalGatewayAvailable || !gatewayEnabled) return;
@@ -38,9 +42,20 @@ async function startGateway(directory: string, manifest?: ReleaseSet) {
     {
       FLOWGATE_MODEL_TOKEN: gatewayToken,
       FLOWGATE_RELEASE: manifest?.id ?? "bundled",
+      ...(internalUpstream
+        ? { FLOWGATE_INTERNAL_UPSTREAM: internalUpstream }
+        : {}),
     },
   );
   host.onCapability = async (method, payload: any) => {
+    if (
+      method === "egress.resolve" &&
+      payload?.id === "flowgate.policy" &&
+      internalUpstream
+    ) {
+      if (suspended || !service) throw new Error("业务出口尚未就绪");
+      return service.call("egress.resolve", { target: internalUpstream });
+    }
     if (
       method !== "credential.resolve" ||
       payload?.reference !== "provider.mock"
@@ -48,10 +63,9 @@ async function startGateway(directory: string, manifest?: ReleaseSet) {
       throw new Error("Credential scope denied");
     return vault.resolve(payload.reference, new Set(["provider.mock"]));
   };
+  host.setSuspended(suspended);
   gateway = host;
-  host.onFault = () => {
-    if (gateway === host) gateway = undefined;
-  };
+  host.onFault = () => hostFault(host, () => gateway === host);
   try {
     await host.start();
   } catch (error) {
@@ -61,10 +75,67 @@ async function startGateway(directory: string, manifest?: ReleaseSet) {
   }
 }
 let updating = false,
+  suspended = false,
   quitting = false,
   recoveryMessage = "业务服务尚未启动";
 let currentDirectory = join(__dirname, "release"),
   currentManifest: ReleaseSet | undefined;
+let faultQueue = Promise.resolve();
+function rendererIdentity(manifest?: ReleaseSet) {
+  return {
+    releaseSet: manifest?.id ?? "bundled",
+    hostVersion: manifest?.components?.ui ?? app.getVersion(),
+  };
+}
+function hostFault(host: ProcessSupervisor, isCurrent: () => boolean) {
+  faultQueue = faultQueue
+    .then(async () => {
+      if (!isCurrent() || updating || quitting || suspended) return;
+      try {
+        if (
+          currentManifest &&
+          (await releases.recordRuntimeFault(currentManifest.id))
+        ) {
+          await rollbackRuntime(currentManifest.id);
+          return;
+        }
+        if (!host.canRestart()) throw new Error("宿主连续异常，已停止自动重启");
+        if (host.name === "Service")
+          await clearDeadWriter(
+            join(app.getPath("userData"), "business/writer.lock"),
+          );
+        await host.start();
+        if (host.name === "Extensions")
+          await service?.call("extensions.reconcile");
+        await publish();
+      } catch (error) {
+        if (host.name === "Extensions") {
+          // Keep management available after a bundled host exhausts its budget.
+          // A downloaded release was already quarantined above when appropriate.
+          await publish().catch(() => {});
+        } else recover(error);
+      }
+    })
+    .catch(recover);
+}
+async function rollbackRuntime(id: string) {
+  if (updating || quitting) return;
+  updating = true;
+  try {
+    const fallback = await releases.quarantineRuntime(id);
+    await stopHosts();
+    currentDirectory = fallback?.directory ?? join(__dirname, "release");
+    currentManifest = fallback?.manifest;
+    await startHosts(currentDirectory, currentManifest);
+    await shell.reload(
+      join(currentDirectory, currentManifest?.ui ?? "index.html"),
+      rendererIdentity(currentManifest),
+    );
+    await publish();
+  } finally {
+    updating = false;
+  }
+}
 app.setName("FlowGate");
 if (backgroundTest && process.platform === "darwin")
   app.setActivationPolicy("accessory");
@@ -74,20 +145,32 @@ if (process.env.FLOWGATE_TEST_DATA)
   app.setPath("userData", process.env.FLOWGATE_TEST_DATA);
 async function clearDeadWriter(path: string) {
   try {
-    const lock = JSON.parse(await readFile(path, "utf8"));
+    const original = await readFile(path, "utf8");
+    const lock = JSON.parse(original);
     if (!Number.isInteger(lock.pid) || lock.pid < 1)
-      throw new Error("写入锁损坏");
-    try {
-      process.kill(lock.pid, 0);
-      throw new Error("业务写入者仍在运行");
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "ESRCH") throw e;
+      throw new Error("Invalid writer lock");
+    // UtilityProcess exit can precede OS process reaping. Keep the writer fence
+    // until that exact PID is gone; never treat the exit event alone as proof.
+    const deadline = Date.now() + 3000;
+    for (;;) {
+      try {
+        process.kill(lock.pid, 0);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+        if ((await readFile(path, "utf8")) !== original)
+          throw new Error("Writer lock changed during recovery");
+        await unlink(path);
+        return;
+      }
+      if (Date.now() >= deadline)
+        throw new Error("Business writer is still running");
+      await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    await unlink(path);
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
 }
+
 function recover(error: unknown) {
   recoveryMessage = error instanceof Error ? error.message : String(error);
   shell.recovery();
@@ -96,6 +179,7 @@ async function publish() {
   if (service) shell.publish(await service.call("snapshot"));
 }
 function attachCapabilities(host: ProcessSupervisor, readonly = false) {
+  host.setSuspended(suspended);
   host.onCapability = async (method, payload: any, signal) => {
     if (method === "native.status") return native.status();
     if (method === "native.control") return native.control();
@@ -152,6 +236,7 @@ async function startHosts(directory: string, manifest?: ReleaseSet) {
         manifest?.catalogVersion === 1 ? JSON.stringify(manifest.builtins) : "",
     },
   );
+  extension.setSuspended(suspended);
   await extension.start();
   service = new ProcessSupervisor(
     "Service",
@@ -160,37 +245,17 @@ async function startHosts(directory: string, manifest?: ReleaseSet) {
       FLOWGATE_DATA: business,
       FLOWGATE_RELEASE: manifest?.id ?? "bundled",
       FLOWGATE_HOST_VERSION: manifest?.components?.service ?? app.getVersion(),
+      FLOWGATE_EXPECTED_SERVICE_MODULES:
+        manifest?.catalogVersion === 1 ? JSON.stringify(manifest.builtins) : "",
     },
   );
   attachCapabilities(service);
   service.onSnapshot = (snapshot) => shell.publish(snapshot);
-  service.onFault = async () => {
-    if (updating || quitting) return;
-    const host = service!;
-    if (!host.canRestart()) {
-      recover("业务服务连续异常，已停止自动重启");
-      return;
-    }
-    try {
-      await clearDeadWriter(join(business, "writer.lock"));
-      await host.start();
-      await publish();
-    } catch (error) {
-      recover(error);
-    }
-  };
-  extension.onFault = async () => {
-    if (updating || quitting) return;
-    if (extension!.canRestart())
-      try {
-        await extension!.start();
-        await service?.call("extensions.reconcile");
-      } catch (error) {
-        // Keep the workspace available so the user can inspect and restart extensions.
-        void publish().catch(() => {});
-      }
-    else void publish().catch(() => {});
-  };
+  const serviceHost = service,
+    extensionHost = extension;
+  service.onFault = () => hostFault(serviceHost, () => service === serviceHost);
+  extension.onFault = () =>
+    hostFault(extensionHost, () => extension === extensionHost);
   await clearDeadWriter(join(business, "writer.lock"));
   try {
     await service.start();
@@ -257,6 +322,25 @@ else {
           disconnect: () => {
             void native?.stop("tray-disconnect").then(publish).catch(recover);
           },
+          rendererFault: () =>
+            new Promise<boolean>((resolve) => {
+              faultQueue = faultQueue
+                .then(async () => {
+                  if (
+                    !updating &&
+                    !quitting &&
+                    currentManifest &&
+                    (await releases.recordRuntimeFault(currentManifest.id))
+                  ) {
+                    await rollbackRuntime(currentManifest.id);
+                    resolve(true);
+                  } else resolve(false);
+                })
+                .catch((error) => {
+                  recover(error);
+                  resolve(true);
+                });
+            }),
         },
       );
       shell.installTray();
@@ -319,6 +403,7 @@ else {
           restoreUI: async () => {
             await shell.reload(
               join(currentDirectory, currentManifest?.ui ?? "index.html"),
+              rendererIdentity(currentManifest),
             );
           },
           preflight: async (directory, manifest) => {
@@ -329,6 +414,10 @@ else {
                 FLOWGATE_DATA: join(data, "business"),
                 FLOWGATE_RELEASE: manifest.id,
                 FLOWGATE_PREFLIGHT: "1",
+                FLOWGATE_EXPECTED_SERVICE_MODULES:
+                  manifest.catalogVersion === 1
+                    ? JSON.stringify(manifest.builtins)
+                    : "",
               },
             );
             attachCapabilities(host, true);
@@ -346,6 +435,9 @@ else {
             await gateway?.call("drain");
             await service?.call("drain");
           },
+          safePoint: async () => {
+            await service?.call("drain");
+          },
           stop: stopHosts,
           start: async (directory, manifest) => {
             await startHosts(directory, manifest);
@@ -359,10 +451,14 @@ else {
             currentManifest = rollbackManifest;
             await shell.reload(
               join(currentDirectory, currentManifest?.ui ?? "index.html"),
+              rendererIdentity(currentManifest),
             );
           },
           reloadUI: async (directory, manifest) => {
-            await shell.reload(join(directory, manifest.ui));
+            await shell.reload(
+              join(directory, manifest.ui),
+              rendererIdentity(manifest),
+            );
             currentDirectory = directory;
             currentManifest = manifest;
           },
@@ -406,7 +502,7 @@ else {
         if (
           shell.recovering ||
           !service ||
-          (updating && input?.method !== "snapshot")
+          ((updating || suspended) && input?.method !== "snapshot")
         )
           throw new Error("服务正在恢复或切换");
         if (
@@ -443,6 +539,63 @@ else {
       });
       ipcMain.handle("shell:request", async (event, input) => {
         shell.authorize(event);
+        if (input?.method === "ui.context")
+          return {
+            ...shell.uiIdentity,
+            epoch: shell.uiEpoch,
+            shellVersion: app.getVersion(),
+            serviceVersion:
+              service?.environment.FLOWGATE_HOST_VERSION ?? app.getVersion(),
+            serviceEpoch: service?.epoch,
+            configRevision: 0,
+            operationId: "renderer-" + shell.uiEpoch,
+            traceId: randomUUID().replaceAll("-", ""),
+            protocolVersion: 1,
+            schemaVersion: 1,
+          };
+        if (input?.method === "ui.trace") {
+          const entry = input.payload;
+          if (
+            !entry ||
+            JSON.stringify(entry).length > 8192 ||
+            !/^[\w.-]{1,120}$/.test(entry.name) ||
+            ![
+              "starting",
+              "ready",
+              "draining",
+              "stopped",
+              "failed",
+              "release-failed",
+              "timeout",
+            ].includes(entry.status) ||
+            typeof entry.context?.pluginInstance !== "string" ||
+            entry.context.pluginInstance.length > 200 ||
+            !Number.isSafeInteger(entry.context.configRevision) ||
+            entry.context.configRevision < 0
+          )
+            throw new Error("界面生命周期事件无效");
+          ProcessSupervisor.trace.emit("Renderer:" + entry.name, entry.status, {
+            operationId: "renderer-" + shell.uiEpoch,
+            traceId:
+              typeof entry.context.traceId === "string"
+                ? entry.context.traceId.slice(0, 80)
+                : "",
+            ...shell.uiIdentity,
+            epoch: shell.uiEpoch,
+            shellVersion: app.getVersion(),
+            serviceVersion:
+              service?.environment.FLOWGATE_HOST_VERSION ?? app.getVersion(),
+            serviceEpoch: service?.epoch,
+            configRevision: entry.context.configRevision,
+            pluginInstance: entry.context.pluginInstance,
+            moduleVersions: {
+              [entry.name]: String(
+                entry.context.moduleVersions?.[entry.name] ?? "unknown",
+              ).slice(0, 80),
+            },
+          });
+          return true;
+        }
         if (input?.method === "ui.ready") {
           shell.markReady();
           if (pendingNavigation) {
@@ -483,7 +636,10 @@ else {
             currentDirectory = join(__dirname, "release");
             currentManifest = undefined;
             await startHosts(currentDirectory);
-            await shell.reload(join(currentDirectory, "index.html"));
+            await shell.reload(
+              join(currentDirectory, "index.html"),
+              rendererIdentity(currentManifest),
+            );
           } finally {
             updating = false;
           }
@@ -545,6 +701,7 @@ else {
           return {
             ...releases.state,
             updating,
+            suspended,
             events: updateTrace.snapshot(),
             release: currentManifest?.id ?? "bundled",
             configured: !!updateConfig,
@@ -566,6 +723,7 @@ else {
         if (input.method === "release.check")
           return releases.check(input.payload?.channel);
         if (input.method === "release.activate") {
+          if (suspended) throw new Error("系统正在恢复网络状态，请稍后更新");
           drafts.assertReloadable();
           if (typeof input.payload?.id !== "string")
             throw new Error("缺少版本标识");
@@ -594,14 +752,66 @@ else {
           currentDirectory = verified.directory;
           currentManifest = verified.manifest;
           shell.uiPath = join(currentDirectory, currentManifest.ui);
+          shell.uiIdentity = rendererIdentity(currentManifest);
         }
         await startHosts(currentDirectory, currentManifest);
         shell.open();
       } catch (error) {
         recover(error);
       }
+      let powerWork = Promise.resolve();
+      let powerGeneration = 0;
+      const pauseDeadlines = (value: boolean) => {
+        native.setSuspended(value);
+        for (const host of [service, extension, gateway])
+          host?.setSuspended(value);
+      };
+      powerMonitor.on("suspend", () => {
+        powerGeneration++;
+        suspended = true;
+        pauseDeadlines(true);
+        powerWork = powerWork
+          .then(async () => {
+            await service?.call("power.suspend");
+          })
+          .catch(() => {
+            /* Resume rechecks every host and the native state. */
+          });
+      });
       powerMonitor.on("resume", () => {
-        void publish().catch(recover);
+        const generation = ++powerGeneration;
+        pauseDeadlines(false);
+        powerWork = powerWork
+          .then(async () => {
+            while (updating && !quitting)
+              await new Promise((resolve) => setTimeout(resolve, 50));
+            if (quitting || generation !== powerGeneration) return;
+            await native.status();
+            for (const host of [extension, service, gateway]) {
+              if (!host) continue;
+              try {
+                await host.call(
+                  "health",
+                  undefined,
+                  undefined,
+                  undefined,
+                  5000,
+                );
+              } catch {
+                if (!host.canRestart())
+                  throw new Error("唤醒后宿主恢复次数已耗尽");
+                await host.stop(false);
+                if (host === service)
+                  await clearDeadWriter(join(data, "business/writer.lock"));
+                await host.start();
+              }
+            }
+            await service?.call("power.resume");
+            if (generation !== powerGeneration) return;
+            suspended = false;
+            await publish();
+          })
+          .catch(recover);
       });
     })
     .catch((error) => {
@@ -612,12 +822,32 @@ else {
     if (quitting) return;
     event.preventDefault();
     quitting = true;
+    native?.setSuspended(false);
+    for (const host of [service, extension, gateway]) host?.setSuspended(false);
     if (shell) shell.quitting = true;
     void (async () => {
       try {
-        await stopHosts();
-        await native?.close();
-        await diagnostics?.flush().catch(() => {});
+        await cleanupStages([
+          {
+            name: "renderer",
+            run: async () => {
+              await shell?.prepareRelease();
+            },
+          },
+          { name: "hosts", run: stopHosts },
+          {
+            name: "native",
+            run: async () => {
+              await native?.close();
+            },
+          },
+          {
+            name: "diagnostics",
+            run: async () => {
+              await diagnostics?.flush();
+            },
+          },
+        ]);
       } catch (error) {
         quitting = false;
         if (shell) shell.quitting = false;

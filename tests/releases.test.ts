@@ -186,3 +186,50 @@ test("signed revocations persist even without a replacement and deny offline loa
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("unresolved safe point preserves current host and does not quarantine an unexecuted candidate", async () => {
+  const scope = mockRepo(
+    [
+      { name: "stable/release.json", content: JSON.stringify(manifest) },
+      { name: "release-2/ui.js", content: bytes },
+    ],
+    { baseURL: "https://safe-point.flowgate.test" },
+  );
+  const dir = await mkdtemp(join(tmpdir(), "flowgate-safe-point-"));
+  try {
+    const manager = new ReleaseManager(dir, {
+      metadataUrl: scope.baseURL + "/metadata/",
+      targetUrl: scope.baseURL + "/targets/",
+      rootPath: join(scope.cachePath, "root.json"),
+    });
+    await manager.init();
+    await manager.check();
+    const forbidden = async () => {
+      throw new Error("Must not replace current host");
+    };
+    let switches = 0;
+    const coordinator = new UpdateCoordinator(manager, {
+      preflight: async () => {},
+      safePoint: async () => {
+        throw new Error("Native result unknown");
+      },
+      drain: forbidden,
+      stop: forbidden,
+      start: forbidden,
+      restore: forbidden,
+      reloadUI: async () => {
+        switches++;
+      },
+    });
+    await assert.rejects(
+      coordinator.activate(manifest.id),
+      /Native result unknown/,
+    );
+    assert.equal(manager.state.current, null);
+    assert.deepEqual(manager.state.quarantine, []);
+    assert.equal(switches, 0);
+  } finally {
+    scope.teardown();
+    await rm(dir, { recursive: true, force: true });
+  }
+});

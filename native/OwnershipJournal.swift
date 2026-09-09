@@ -65,6 +65,20 @@ final class MacProxyTransaction: ProxyTransaction {
 final class SystemProxyOwner {
     let journal: OwnershipJournal
     let backend: ProxyBackend
+    func isCurrentOwner(operationId: String) -> Bool {
+        guard journal.record.operationId == operationId, !journal.record.changes.isEmpty else { return false }
+        do {
+            let prefs = try backend.begin()
+            defer { prefs.unlock() }
+            for change in journal.record.changes {
+                let current = try prefs.read(change.service)
+                if current["ProxyAutoConfigEnable"] as? Int == 1 || current["ProxyAutoDiscoveryEnable"] as? Int == 1 { return false }
+                let applied = try JSONSerialization.jsonObject(with: change.applied) as! [String: Any]
+                if !NSDictionary(dictionary: fields(current, change.keys)).isEqual(to: applied) { return false }
+            }
+            return true
+        } catch { return false }
+    }
     let groups = [["HTTPEnable", "HTTPProxy", "HTTPPort"], ["HTTPSEnable", "HTTPSProxy", "HTTPSPort"], ["SOCKSEnable", "SOCKSProxy", "SOCKSPort"]]
     init(journal: OwnershipJournal, backend: ProxyBackend = MacProxyBackend()) { self.journal = journal; self.backend = backend }
     func fields(_ value: [String: Any], _ keys: [String]) -> [String: Any] { value.filter { keys.contains($0.key) } }

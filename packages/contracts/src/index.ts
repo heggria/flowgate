@@ -13,6 +13,7 @@ export interface TraceContext {
   protocolVersion?: number;
   schemaVersion?: number;
   hostVersion?: string;
+  serviceEpoch?: number;
   kernelVersion?: string;
   moduleVersions?: Record<string, string>;
 }
@@ -117,6 +118,8 @@ export interface KernelState {
   operationId?: string;
   message?: string;
   systemControl: boolean;
+  systemProxyOwned?: boolean;
+  tunInterface?: string;
   version?: string;
 }
 export interface SystemProxyObservation {
@@ -132,7 +135,7 @@ export interface NetworkState {
   defaultInterface: string | null;
   defaultGateway: string | null;
   proxyEnabled: boolean | null;
-  interfaces: { name: string; addresses: string[] }[];
+  interfaces: { name: string; addresses: string[]; cidrs?: string[] }[];
   dns: { domain: string; servers: string[] }[];
   routes: string[];
   warnings: string[];
@@ -207,6 +210,8 @@ export interface FlowGateClient {
   subscribe(listener: (snapshot: AppSnapshot) => void): () => void;
 }
 export interface ShellPort {
+  setReleaseHandler?: (handler: () => Promise<void>) => () => void;
+  prepareRelease?: () => Promise<void>;
   onNavigate?: (listener: (route: string) => void) => () => void;
   version: string;
   platform: string;
@@ -223,6 +228,8 @@ export interface ShellPort {
       | "gateway.start"
       | "gateway.stop"
       | "ui.ready"
+      | "ui.context"
+      | "ui.trace"
       | "ui.draft.get"
       | "ui.draft.set"
       | "helper.install"

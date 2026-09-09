@@ -4,6 +4,7 @@ export class NetworkObserver {
   private pending?: Promise<NetworkState>;
   private timer?: ReturnType<typeof setInterval>;
   private stopped = false;
+  private generation = 0;
   constructor(
     private readonly inspect: () => Promise<NetworkState>,
     private readonly publish: (state: NetworkState) => void,
@@ -13,22 +14,25 @@ export class NetworkObserver {
     if (this.stopped)
       return Promise.reject(new Error("Network observer stopped"));
     if (this.pending) return this.pending;
-    this.pending = Promise.resolve()
+    const generation = this.generation;
+    const pending = Promise.resolve()
       .then(this.inspect)
       .then(
         (state) => {
-          if (!this.stopped) this.publish(state);
+          if (!this.stopped && generation === this.generation)
+            this.publish(state);
           return state;
         },
         (error) => {
-          if (!this.stopped) this.failed();
+          if (!this.stopped && generation === this.generation) this.failed();
           throw error;
         },
       )
       .finally(() => {
-        this.pending = undefined;
+        if (this.pending === pending) this.pending = undefined;
       });
-    return this.pending;
+    this.pending = pending;
+    return pending;
   }
   start(interval = 15000) {
     if (this.timer || this.stopped) return;
@@ -41,7 +45,13 @@ export class NetworkObserver {
   }
   stop() {
     this.stopped = true;
+    this.generation++;
+    this.pending = undefined;
     clearInterval(this.timer);
     this.timer = undefined;
+  }
+  resume() {
+    this.stopped = false;
+    this.start();
   }
 }

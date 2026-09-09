@@ -71,6 +71,7 @@ await withBuildOutput(async (output) => {
       "native/ProcessIdentity.swift",
       "native/KernelWatchdog.swift",
       "native/OwnershipJournal.swift",
+      "native/SessionLease.swift",
       "native/NetworkEngine.swift",
     ];
     execFileSync("/usr/bin/swiftc", [
