@@ -20,7 +20,10 @@
     "setup:kernel": "node scripts/fetch-kernel.mjs",
     "test:journeys": "npm run build && node tests/journeys.integration.mjs",
     "test:extensions": "npm run build && node tests/extensions.integration.mjs",
-    "test:ui-design": "npm run build && node tests/ui-design.integration.mjs"
+    "test:ui-design": "npm run build && node tests/ui-design.integration.mjs",
+    "test:infrastructure": "node --test tests/infrastructure.test.mjs",
+    "audit:dependencies": "node scripts/audit-dependencies.mjs",
+    "test:package": "node tests/package.integration.mjs"
   },
   "devDependencies": {
     "@electron/notarize": "^3.1.1",
@@ -34,7 +37,8 @@
     "playwright": "^1.63.0",
     "prettier": "3.9.6",
     "tsx": "^4.23.13",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "@babel/parser": "8.0.4"
   },
   "dependencies": {
     "@grpc/grpc-js": "1.14.4",
@@ -51,5 +55,10 @@
     "packages/*"
   ],
   "type": "module",
-  "license": "GPL-3.0-or-later"
+  "license": "GPL-3.0-or-later",
+  "engines": {
+    "node": ">=24.19.0 <25",
+    "npm": ">=11 <12"
+  },
+  "packageManager": "npm@11.17.0"
 }
