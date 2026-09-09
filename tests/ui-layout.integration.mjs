@@ -224,9 +224,14 @@ try {
         });
         if ((zoom === 1 && width === 1180) || zoom === 1.5) {
           const png = await app.evaluate(async ({ BrowserWindow }) =>
-            (await BrowserWindow.getAllWindows()[0].webContents.capturePage()).toPNG().toString("base64"),
+            (await BrowserWindow.getAllWindows()[0].webContents.capturePage())
+              .toPNG()
+              .toString("base64"),
           );
-          await writeFile(join(output, id + "-" + theme + "-" + zoom + ".png"), Buffer.from(png, "base64"));
+          await writeFile(
+            join(output, id + "-" + theme + "-" + zoom + ".png"),
+            Buffer.from(png, "base64"),
+          );
         }
         if (zoom === 1 && width === 1180) await axe(id + "-" + theme);
       }
