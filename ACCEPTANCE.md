@@ -1,42 +1,53 @@
 # 验收状态
 
-完整 v1 尚未完成。下列本地行为已实现并持续验证，正式系统接管与发布仍有独立验收条件。原计划逐项追踪见 [PLAN_AUDIT.md](PLAN_AUDIT.md) 第 9 节。
+本文件区分开发行为、真实网络、组合安装包和正式分发。原计划见 [PLAN_AUDIT.md](PLAN_AUDIT.md)，证书相关项目按用户要求延期，其他未完成项保留。
 
-## 自动验收
+## 已验证的行为
 
-扩展管理专项现已纳入 `npm run verify`：核心权限/依赖约束、独立启停与失败释放、持久偏好、宿主连续崩溃后的 UI 恢复、实际转发保持，以及签名 UI/Service 更新与回退后偏好保留。脚本为 `tests/extensions.test.ts`、`tests/extensions.integration.mjs`；专项通过证据为 `work/extensions-result.json`、`work/extensions-source-final.log` 和 `work/extensions-ui-updates.log`；`work/extensions-final-verify.log` 是 UI 改版期间的失败记录，不代表当前整套通过。新应用测试使用各自的临时代理监听端口，避免与用户应用或并行测试争用 17890。
+完整入口 `npm run verify` 使用隔离数据、本地协议服务器和测试证书，不修改系统路由、DNS 或代理。
 
-`npm run verify` 是完整入口，使用隔离数据、本地协议服务器和临时测试证书；不修改系统代理、DNS 或路由。
+- 类型与 AST 依赖边界、单写事务/幂等/排空、持久交接、unknown 原生结果核对、写锁恢复。
+- 插件依赖、原子贡献、内核适配生命周期、统一实例追踪、任务检查点、并发存储与有界清理。
+- HTTP/SOCKS 入站，SOCKS、Shadowsocks、VMess、VLESS、Trojan、Hysteria2、TUIC 的实际本地 TCP、IPv6、DNS、UDP 矩阵。
+- 选定外部出口、规则直连、断线无直连回退、重启恢复；内部网关通过应用所选代理访问上游，流式取消和更新期间排空。
+- 内核/桥接强杀、宿主挂死和连续迟发崩溃、版本隔离和兼容回退；Renderer 重建期间转发保持。
+- 操作取消、加密凭据引用/热轮换/重启恢复，诊断不记录订阅正文与密钥。
+- TUF 入口、签名、摘要、路径/链接/额外文件校验；双签根轮换、过期、离线回执、撤回；UI/Service 更新与并发配置交接。
+- 暂停期间准入保护与跨进程期限暂停、恢复后重新观测和原生核对；这是注入电源事件测试。
+- 节点/订阅/规则集管理、失败保留、内核测速、草稿、命令/设置/详情贡献、界面与扩展管理。
 
-- 类型、依赖边界、49 项单元/局部测试、业务与原生构建。
-- 单写锁、幂等操作、事务排空、版本化交接；模块依赖与原子贡献、任务检查点、存储迁移、期限和资源释放。
-- 节点/订阅管理、草稿与保存失败保护、真实内核测量、规则集 HTTPS 导入/刷新/失败保留。
-- HTTP 与 SOCKS 入站，外部 HTTP 出口，IP 规则直连；SOCKS、Shadowsocks、VMess、VLESS、Trojan、Hysteria2、TUIC 的 TCP、IPv6 目标、DNS 和 UDP 本地矩阵。
-- 外部 SOCKS 停止后不直连回退，重启后恢复；明确接口和独立解析器的本地测试。接口测试使用 lo0，不是 VPN 验收。
-- HTTPS / SOCKS5h egress 的证书校验、目标范围和无直连回退。
-- 内核、桥接、Service、Extension、Renderer 强杀；手动内核遗留清理、写入禁止、恢复后真实转发。控制诊断按 trace/代次/模块记录，正文和凭据不进入日志。
-- 加密凭据的跨进程引用、热轮换、冲突拒绝和应用重启恢复。
-- TUF 签名、摘要、入口、路径/链接/额外文件拒绝，根密钥轮换、过期、离线回执、撤回与隔离。
-- 签名 UI/Service 更新、流式网关排空、失败回退，以及配置正在应用时的版本交接；不回滚用户数据、不重放已提交操作。
-- 界面的真实流量历史、搜索/详情、时间范围、深浅色、窄窗口、命令贡献、深链和崩溃重建。
+系统所有权测试调用生产 Swift 算法，但使用注入后端，覆盖 PAC 保留、第三方部分修改、提交失败重试、服务消失，以及旧会话重试不能清理新资源；它不是实际 SystemConfiguration 特权写入。
 
-以 `work/goal-final-verify.log` 和 `work/{e2e,native,protocols,native-faults,ownership,gateway,update,credentials,cancellation,features,drafts,ui}-result.json` 为实际运行证据。日志出现失败时不能声称整套通过，修复后须重跑受影响项目。
+## 当前外部网络验收
 
-## 系统所有权测试的范围
+2026-09-10，在本机现有默认出口 `utun5` 上，手动 HTTP CONNECT 和 SOCKS5h 到 example.com 的 HTTPS 请求、HTTP CONNECT 到 Cloudflare 的 HTTPS 请求均通过，TLS 验证开启。默认路由、系统代理和 DNS 的前后观察一致。该实验发现并修复了手动模式自动绑定网卡绕开系统路由的问题，生产代码修复后的复验通过。
 
-`tests/OwnershipTests.swift` 执行生产所有权算法，但使用注入的配置后端，验证 PAC 保留、第三方字段保护、提交失败重试、持久恢复和网络服务消失。它不会调用真实 SystemConfiguration 写入，也不能替代特权 helper 验收。
+外部 IPv6 字面地址请求未通过；系统不经过应用直接访问相同地址也失败。记录为当前网络路径未通过，不认为应用已完成外部 IPv6 验收。本地 IPv6 协议矩阵的成功不能替代这一项。
 
-## 必须继续完成的系统与发布验收
+这些请求不读取或保存公网出口 IP、账户信息或响应正文，也未关闭或重配现有 VPN。未据接口名推断 VPN 所有者。
 
-1. Developer ID 同团队签名、公证、真实 helper 注册与管理员批准；系统代理/TUN 建立、断开、所有权恢复和主进程/helper 异常退出。
-2. 用户实际使用的 VPN/PAC/外部代理与真实 IPv4/IPv6/DNS 路径共存；网络切换、睡眠/唤醒及长时间使用。不能承诺兼容所有强制 VPN 或系统过滤器。
-3. 用户提供的官方 HTTPS 元数据/产物仓库、正式角色密钥和信任根、Squirrel.Mac 完整应用 feed；实际发布、撤回与生产轮换流程。
-4. 已完成：公开仓库的远程 macOS CI 通过，见 [验证结果](https://github.com/heggria/flowgate/actions/runs/34375563696)，对应源码 `fa64a7a`，包含 43 项测试及全部集成场景。
+## 构建、安装包与远程发布
 
-## 证书相关验收延期（2026-09-10）
+工程流水线包含静态检查、依赖审计、macOS 全套验证、原子构建、来源/哈希清单、独立安装包后台真实请求，以及成功主分支构建的开发预发布。主分支要求 PR 与两项远程检查通过。开发包为 ad-hoc 签名，不等于 Developer ID 签名、公证或可用于特权模式的正式发行。
 
-用户明确要求短期内跳过证书相关工作。Developer ID、正式公证、依赖同团队签名的 helper 安装和系统代理/TUN 特权真机验收归为**按用户要求延期**，不再作为当前迭代的外部阻塞，也不宣称已经通过。保留架构与后续验收要求，当前继续支持无需正式证书的手动 HTTP/SOCKS 模式。
+业务更新使用独立 TUF 角色和实际 HTTPS 源；最终发布状态、源码提交与真实应用激活记录需与 RELEASING 对齐。历史版本的成功不能代替最终整合包的验证。
 
-独立业务更新的 TUF 信任根和分发仓库不依赖 Apple 证书，仍需单独完成正式配置与实源验证。完整应用自动更新和正式二进制分发随签名阶段延期。公开源码与远程 CI 已完成；验证结果不覆盖其他任务正在修改的未提交界面代码。
+## 尚未通过的真机项目
 
-本机有效签名身份仍为 0，正式更新配置保持关闭。这些条件未达到前，不标记“全部计划完成”。Web 独立宿主、其他桌面系统、完整模型网关和多代滚动网关属于原计划的后续范围。
+- Wi-Fi/有线切换、外部 VPN/PAC 启停与重连、受限制网络路径的真实分流。
+- 实际 macOS 睡眠/唤醒、长时间日常运行与这些条件下的异常退出恢复。
+- 当前环境的外部 IPv6 路径。
+
+## 用户要求延期的证书项目
+
+Developer ID 同团队签名、公证、正式 helper 注册与管理员批准、真实系统代理/TUN 接管恢复和特权崩溃矩阵，以及 Squirrel.Mac 完整应用正式安装更新延期。保留实现和后续验收要求；不再索取证书，也不把它作为独立业务开发的阻塞。完整 v1 尚不能标记全部通过。
+
+## 本轮组合验证记录
+
+工作树 `fix/runtime-recovery` 合并工程基线与 UI 专项后，68 项单元测试、协议、原生故障、签名更新、凭据和电源测试通过，记录在 `work/ui-network-combined-verify.log`。该日志最后的规则集定位错误是旧测试未适配弹窗，修正后 `work/combined-features-recheck.log` 通过。
+
+`work/combined-ui-tail.log` 中草稿、完整业务路径、UI 设计、一致性和 96 组布局检查通过；随后加载状态测试发现启动时空白，修复后的 `work/combined-states-recheck.log` 覆盖加载/错误/待处理状态、扩展生命周期与真实转发。不得把保留的失败日志单独称为整套通过。
+
+后台不抢焦点检查见 `work/combined-background.log`；实际安装包身份、签名一致性与真实转发见 `work/combined-package.log`，该包仍是 feed 整合前的开发包。最终源码与分发包需要对应新的 CI 和安装包验证记录。
+
+真实外网修复前后记录为 `work/external-network.log`、`work/external-network-no-bind.log`、`work/external-network-fixed.log`；外部 IPv6 失败保留在 `work/external-ipv6.log`。失败证据未删除。
