@@ -30,12 +30,30 @@ function App({ routes }: { routes: RouteContribution[] }) {
     [page, setPage] = useState("overview"),
     [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
+    [notice, setNotice] = useState(""),
     [query, setQuery] = useState(""),
     [theme, setTheme] = useState(
       () => localStorage.getItem("flowgate.theme") ?? "light",
     );
   const cancelable = useSyncExternalStore(subscribePending, pendingCount);
   const search = useRef<HTMLInputElement>(null);
+  const inFlight = useRef(false);
+  const previousPage = useRef(page);
+  useEffect(() => {
+    if (previousPage.current === page) return;
+    previousPage.current = page;
+    window.scrollTo({ top: 0 });
+    const heading = document.querySelector<HTMLElement>(".content h1");
+    if (heading) {
+      heading.tabIndex = -1;
+      heading.focus({ preventScroll: true });
+    }
+  }, [page]);
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(""), 5000);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
   useEffect(
     () =>
       window.shell.onNavigate?.((route) => {
@@ -79,23 +97,33 @@ function App({ routes }: { routes: RouteContribution[] }) {
     };
   }, []);
   const run = async (action: () => Promise<unknown>) => {
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     setError("");
+    setNotice("");
     try {
       await action();
     } catch (e) {
       setError(e instanceof Error ? e.message : "操作失败");
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   };
-  const save = async (c: Configuration) => {
+  const save = async (c: Configuration, options?: { local?: boolean }) => {
+    if (options?.local) {
+      const result = await mutation("configuration.save", c);
+      setSnapshot(result.snapshot);
+      return true;
+    }
     let saved = false;
     await run(async () => {
       const result = await mutation("configuration.save", c);
       setSnapshot(result.snapshot);
       saved = true;
     });
+    if (saved) setNotice("配置已保存");
     return saved;
   };
   const commands = runtime.entries
@@ -104,6 +132,11 @@ function App({ routes }: { routes: RouteContribution[] }) {
   const route = routes.find((r) => r.id === page) ?? routes[0];
   const SelectedPage = route.Component;
   const connected = snapshot?.kernel.status === "running";
+  const transitioning =
+    snapshot && ["starting", "stopping"].includes(snapshot.kernel.status);
+  const pendingConfiguration =
+    connected &&
+    snapshot.kernel.appliedRevision !== snapshot.configuration.revision;
   return (
     <div className="app">
       {cancelable > 0 ? (
@@ -113,8 +146,14 @@ function App({ routes }: { routes: RouteContribution[] }) {
             void cancelPending().catch((error) => setError(String(error)));
           }}
         >
-          取消当前请求
+          取消当前请求（{cancelable}）
         </button>
+      ) : null}
+      {notice ? (
+        <div className="toast" role="status">
+          <span className="dot online" />
+          {notice}
+        </div>
       ) : null}
       <aside className="sidebar">
         <div className="brand">
@@ -133,7 +172,7 @@ function App({ routes }: { routes: RouteContribution[] }) {
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Escape") setQuery("");
-              if (e.key === "Enter") {
+              if (e.key === "Enter" && query.trim()) {
                 const first = routes.find((r) => r.label.includes(query));
                 if (first) {
                   setPage(first.id);
@@ -201,7 +240,7 @@ function App({ routes }: { routes: RouteContribution[] }) {
           ) : null}
         </nav>
         <div className="sidebarbottom">
-          <span className="version">FlowGate 0.2</span>
+          <span className="version">FlowGate {window.shell.version}</span>
           <button
             className="iconbutton"
             aria-label={theme === "light" ? "切换深色外观" : "切换浅色外观"}
@@ -233,7 +272,7 @@ function App({ routes }: { routes: RouteContribution[] }) {
               className={
                 connected ? "secondary connectbutton" : "primary connectbutton"
               }
-              disabled={busy || !snapshot}
+              disabled={busy || !snapshot || Boolean(transitioning)}
               onClick={() =>
                 run(() =>
                   mutation(connected ? "proxy.disconnect" : "proxy.connect"),
@@ -241,7 +280,7 @@ function App({ routes }: { routes: RouteContribution[] }) {
               }
             >
               <Icon name="power" size={14} />
-              {busy ? "处理中" : connected ? "停止代理" : "启动代理"}
+              {transitioning ? "切换中…" : connected ? "停止代理" : "启动代理"}
             </button>
           </div>
         </header>
@@ -253,29 +292,49 @@ function App({ routes }: { routes: RouteContribution[] }) {
             </button>
           </div>
         ) : null}
+        {pendingConfiguration ? (
+          <div className="configurationbar" role="status">
+            <div>
+              <strong>有配置等待生效</strong>
+              <span>当前连接仍使用上一次配置。应用后会重新建立连接。</span>
+            </div>
+            <button
+              className="primary"
+              disabled={busy}
+              onClick={() => run(() => mutation("proxy.connect"))}
+            >
+              应用配置
+            </button>
+          </div>
+        ) : null}
         {snapshot ? (
-          <div className="content">
-            <SelectedPage
-              detailPanels={runtime.entries
-                .filter((entry) => entry.kind === "detailPanel")
-                .map((entry) => entry.value as DetailPanelContribution)}
-              settingsContributions={runtime.entries
-                .filter((entry) => entry.kind === "settings")
-                .map(
-                  (entry) =>
-                    entry.value as React.ComponentType<
-                      import("./modules").FeatureProps
-                    >,
-                )}
-              snapshot={snapshot}
-              save={save}
-              run={run}
-              navigate={setPage}
-              busy={busy}
-            />
+          <div className="content" data-page={page}>
+            <fieldset className="workspacefields" aria-busy={busy}>
+              <SelectedPage
+                detailPanels={runtime.entries
+                  .filter((entry) => entry.kind === "detailPanel")
+                  .map((entry) => entry.value as DetailPanelContribution)}
+                settingsContributions={runtime.entries
+                  .filter((entry) => entry.kind === "settings")
+                  .map(
+                    (entry) =>
+                      entry.value as React.ComponentType<
+                        import("./modules").FeatureProps
+                      >,
+                  )}
+                snapshot={snapshot}
+                save={save}
+                run={run}
+                navigate={setPage}
+                busy={busy}
+              />
+            </fieldset>
           </div>
         ) : (
-          <div className="empty">正在连接服务…</div>
+          <div className="empty loadingstate" role="status">
+            <span className="loadingring" />
+            正在连接服务…
+          </div>
         )}
         <footer className="statusbar">
           <span>
@@ -285,7 +344,13 @@ function App({ routes }: { routes: RouteContribution[] }) {
             {snapshot?.lifecycle === "ready" ? "服务就绪" : "服务连接中"}
           </span>
           <span>{snapshot?.network?.defaultInterface ?? "网络未检测"}</span>
-          <span className="statusright">仅统计经过 FlowGate 的流量</span>
+          <span className="statusright">
+            {busy
+              ? "正在处理操作…"
+              : pendingConfiguration
+                ? "配置待生效"
+                : "仅统计经过 FlowGate 的流量"}
+          </span>
         </footer>
       </main>
     </div>

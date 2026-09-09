@@ -1,7 +1,21 @@
+import { useState } from "react";
+import {
+  Combobox,
+  Field,
+  FormFooter,
+  Modal,
+  PageHeader,
+  TaskError,
+  useTask,
+} from "../components";
+import { ConfirmAction } from "../ConfirmAction";
 import { client } from "../../../packages/client/src/index";
 import { useDraft } from "../drafts";
 import type { FeatureProps } from "../modules";
-export function Network({ snapshot, save, run }: FeatureProps) {
+export function Network({ snapshot, save, run, navigate }: FeatureProps) {
+  const [adding, setAdding] = useState(false);
+  const task = useTask();
+  const close = () => setAdding(false);
   const draft = useDraft("network", { selected: "", dns: "" });
   const { selected, dns } = draft.value;
   const setSelected = (selected: string) => draft.change({ selected }),
@@ -9,11 +23,21 @@ export function Network({ snapshot, save, run }: FeatureProps) {
   const c = snapshot.configuration;
   return (
     <>
-      <h1>网络环境</h1>
+      <PageHeader
+        title="网络环境"
+        description="观察本机网络，将外部连接接入分流。"
+      >
+        <button className="primary" onClick={() => setAdding(true)}>
+          ＋ 绑定网络
+        </button>
+      </PageHeader>
       {draft.error ? <p role="alert">{draft.error}</p> : null}
       <p>
         HTTP / SOCKS 外部代理可在节点页导入。已有网络接口可作为独立的 TCP / UDP
         出口。
+        <button className="textbutton" onClick={() => navigate("nodes")}>
+          前往导入外部代理 →
+        </button>
       </p>
       {snapshot.networkConflicts?.map((issue) => (
         <p key={issue.id} role="status" className="hint">
@@ -61,60 +85,107 @@ export function Network({ snapshot, save, run }: FeatureProps) {
           ))}
         </section>
       ) : null}
-      <section className="panel">
-        <h2>绑定外部网络</h2>
-        <p>
-          明确选择接口与解析器，再在分流规则中选择该网络。接口消失时连接失败，不自动切换其他出口。
-        </p>
-        <form
-          className="ruleform"
-          onSubmit={(e) => {
-            e.preventDefault();
-            save({
-              ...c,
-              externalNetworks: [
-                ...(c.externalNetworks ?? []),
-                {
-                  id: crypto.randomUUID(),
-                  name: selected,
-                  interface: selected,
-                  dnsServer: dns,
-                },
-              ],
-            });
-          }}
-        >
-          <select
-            aria-label="外部网络接口"
-            value={selected}
-            onChange={(e) => setSelected(e.target.value)}
-            required
+      <section className="resourcesection">
+        <div className="resourcetools">
+          <h2>
+            外部网络{" "}
+            <span className="count">{c.externalNetworks?.length ?? 0}</span>
+          </h2>
+          <span className="hint">接口与 DNS 成对绑定</span>
+        </div>
+        {!c.externalNetworks?.length ? (
+          <p className="sectionempty">
+            尚未绑定外部网络。绑定后，可以在分流规则中选择它。
+          </p>
+        ) : null}
+        {adding ? (
+          <Modal
+            title="绑定外部网络"
+            description="为此网络指定接口与解析器，作为独立出口。"
+            icon="network"
+            onClose={close}
+            busy={task.pending}
           >
-            <option value="">选择已观察的接口</option>
-            {snapshot.network?.interfaces
-              .filter((i) => i.name !== "lo0")
-              .map((i) => (
-                <option key={i.name} value={i.name}>
-                  {i.name}
-                </option>
-              ))}
-          </select>
-          <input
-            aria-label="外部网络 DNS"
-            value={dns}
-            onChange={(e) => setDns(e.target.value)}
-            placeholder="udp://网络提供的DNS地址"
-            required
-          />
-          <button className="primary">添加网络</button>
-        </form>
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!selected) {
+                  task.setError("请选择一个已观察的网络接口。");
+                  return;
+                }
+                void task.execute(async () => {
+                  const saved = await save(
+                    {
+                      ...c,
+                      externalNetworks: [
+                        ...(c.externalNetworks ?? []),
+                        {
+                          id: crypto.randomUUID(),
+                          name: selected,
+                          interface: selected,
+                          dnsServer: dns,
+                        },
+                      ],
+                    },
+                    { local: true },
+                  );
+                  if (!saved) return false;
+                  await draft.clear({ selected: "", dns: "" });
+                  close();
+                });
+              }}
+            >
+              <Field id="external-interface" label="外部网络接口">
+                <Combobox
+                  id="external-interface"
+                  label="外部网络接口"
+                  value={selected}
+                  onChange={setSelected}
+                  placeholder="选择已观察的接口"
+                  options={(snapshot.network?.interfaces ?? [])
+                    .filter((i) => i.name !== "lo0")
+                    .map((i) => ({
+                      value: i.name,
+                      label: i.name,
+                      detail: i.addresses.join(" · "),
+                    }))}
+                />
+              </Field>
+              <Field
+                id="external-dns"
+                label="外部网络 DNS"
+                hint="使用该网络提供的解析器地址。"
+              >
+                <input
+                  id="external-dns"
+                  required
+                  value={dns}
+                  onChange={(e) => setDns(e.target.value)}
+                  placeholder="udp://10.0.0.1"
+                />
+              </Field>
+              <p className="fieldhint">
+                接口消失时连接会失败，不会自动切换到其他出口。
+              </p>
+              <TaskError message={task.error || draft.error} />
+              <FormFooter
+                onClose={close}
+                pending={task.pending}
+                ready={draft.ready}
+                label="添加网络"
+              />
+            </form>
+          </Modal>
+        ) : null}
         {(c.externalNetworks ?? []).map((n) => (
           <div className="entry" key={n.id}>
             <strong>{n.name}</strong>
             <code>{n.dnsServer}</code>
-            <button
-              className="quiet"
-              onClick={() =>
+            <ConfirmAction
+              label="移除"
+              title={`移除网络「${n.name}」？`}
+              description="引用此网络的规则会一并移除；若它是所选出口，配置将回到直连。外部软件本身的网络设置不会改变。"
+              onConfirm={() =>
                 save({
                   ...c,
                   externalNetworks: c.externalNetworks?.filter(
@@ -134,14 +205,14 @@ export function Network({ snapshot, save, run }: FeatureProps) {
                   },
                 })
               }
-            >
-              移除
-            </button>
+            />
           </div>
         ))}
       </section>
       {!snapshot.network ? (
-        <div className="empty">点击右上角刷新，读取本机网络状态。</div>
+        <div className="empty">
+          正在读取本机网络状态，可使用右上角刷新重试。
+        </div>
       ) : (
         <>
           <section className="panel">

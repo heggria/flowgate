@@ -7,7 +7,7 @@ export function RoutePreview() {
     setTarget = (target: string) => draft.change({ target });
   const [result, setResult] = useState("");
   return (
-    <section className="panel">
+    <section className="resourcesection routepreview">
       <h2>路径预览</h2>
       <form
         className="inline"

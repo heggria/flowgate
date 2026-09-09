@@ -107,8 +107,20 @@ function attachCapabilities(host: ProcessSupervisor, readonly = false) {
     if (method === "native.stop") return native.stop(payload.operationId);
     if (
       method === "extension.call" &&
+      payload?.method === "extensions.restart"
+    ) {
+      const host = extension;
+      if (!host) throw new Error("扩展宿主不可用");
+      await host.stop(false);
+      host.resetRestartBudget();
+      await host.start();
+      return host.call("extensions.configure", payload.payload);
+    }
+    if (
+      method === "extension.call" &&
       [
         "health",
+        "extensions.configure",
         "network.inspect",
         "subscription.parse",
         "ruleset.parse",
@@ -133,6 +145,8 @@ async function startHosts(directory: string, manifest?: ReleaseSet) {
       FLOWGATE_RELEASE: manifest?.id ?? "bundled",
       FLOWGATE_HOST_VERSION:
         manifest?.components?.extension ?? app.getVersion(),
+      FLOWGATE_EXPECTED_EXTENSIONS:
+        manifest?.catalogVersion === 1 ? JSON.stringify(manifest.builtins) : "",
     },
   );
   await extension.start();
@@ -167,10 +181,12 @@ async function startHosts(directory: string, manifest?: ReleaseSet) {
     if (extension!.canRestart())
       try {
         await extension!.start();
+        await service?.call("extensions.reconcile");
       } catch (error) {
-        recover(error);
+        // Keep the workspace available so the user can inspect and restart extensions.
+        void publish().catch(() => {});
       }
-    else recover("扩展宿主超过重启预算");
+    else void publish().catch(() => {});
   };
   await clearDeadWriter(join(business, "writer.lock"));
   try {
@@ -350,6 +366,8 @@ else {
         (event) => updateTrace.record(event),
       );
       const clientMethods = new Set([
+        "extensions.setEnabled",
+        "extensions.restart",
         "snapshot",
         "network.refresh",
         "node.measure",

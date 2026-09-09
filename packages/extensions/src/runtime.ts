@@ -11,8 +11,11 @@ export class ExtensionRuntime {
   private active = new Set<Promise<unknown>>();
   private controller = new AbortController();
   private draining = false;
-  async start(modules: RuntimeModule[]) {
-    await this.modules.activate(modules);
+  async start(
+    modules: RuntimeModule[],
+    satisfiedDependencies?: ReadonlySet<string>,
+  ) {
+    await this.modules.activate(modules, satisfiedDependencies);
   }
   async call(method: string, payload?: unknown, signal?: AbortSignal) {
     if (this.draining || this.modules.status !== "ready")

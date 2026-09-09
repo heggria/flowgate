@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect, useId } from "react";
 import type {
   TrafficSnapshot,
   FlowRecord,
@@ -28,12 +28,25 @@ export function Traffic({
   const [query, setQuery] = useState(""),
     [active, setActive] = useState(false),
     [selected, setSelected] = useState<FlowRecord | null>(null);
+  const inspector = useRef<HTMLDivElement>(null);
+  const returnFocus = useRef<HTMLButtonElement | null>(null);
+  const inspectorId = useId();
+  useEffect(() => {
+    if (selected) {
+      inspector.current?.scrollIntoView({ block: "nearest" });
+      inspector.current?.focus({ preventScroll: true });
+    }
+  }, [selected?.id]);
+  const closeDetails = () => {
+    setSelected(null);
+    returnFocus.current?.focus({ preventScroll: true });
+  };
   const rows = (traffic?.flows ?? []).filter(
     (f) =>
       (!active || f.state === "active") &&
-      `${f.target} ${f.outbound} ${f.protocol}`
+      `${f.target} ${f.outbound} ${name(f.outbound)} ${f.protocol}`
         .toLowerCase()
-        .includes(query.toLowerCase()),
+        .includes(query.trim().toLowerCase()),
   );
   if (sort !== "recent")
     rows.sort((a, b) =>
@@ -106,7 +119,14 @@ export function Traffic({
                 <td>
                   <button
                     className="targetbutton"
-                    onClick={() => setSelected(f)}
+                    aria-expanded={current?.id === f.id}
+                    aria-controls={
+                      current?.id === f.id ? inspectorId : undefined
+                    }
+                    onClick={(event) => {
+                      returnFocus.current = event.currentTarget;
+                      setSelected(f);
+                    }}
                   >
                     <i
                       className={f.state === "active" ? "dot online" : "dot"}
@@ -137,16 +157,39 @@ export function Traffic({
                 ? "等待应用流量经过代理"
                 : "启动代理后，连接将在这里显示"}
           </span>
+          {query || active ? (
+            <button
+              className="textbutton"
+              onClick={() => {
+                setQuery("");
+                setActive(false);
+              }}
+            >
+              清除筛选
+            </button>
+          ) : null}
         </div>
       ) : null}
       {current ? (
-        <div className="inspector">
+        <div
+          className="inspector"
+          id={inspectorId}
+          ref={inspector}
+          tabIndex={-1}
+          aria-label="连接详情"
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              event.stopPropagation();
+              closeDetails();
+            }
+          }}
+        >
           <div className="paneltitle">
             <h2>连接详情</h2>
             <button
               className="iconbutton"
               aria-label="关闭连接详情"
-              onClick={() => setSelected(null)}
+              onClick={closeDetails}
             >
               <Icon name="close" />
             </button>

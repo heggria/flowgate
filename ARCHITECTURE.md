@@ -2,6 +2,8 @@
 
 This document describes implemented foundations, not full completion of the approved plan. See [PLAN_AUDIT.md](PLAN_AUDIT.md) for per-item gaps and evidence.
 
+The current built-in extension management architecture and acceptance path are specified in [EXTENSIONS.md](EXTENSIONS.md): separate durable preferences, per-package runtime ownership, dependency enforcement, bounded cleanup, generation identity and verified Release Set integration.
+
 ## Process and release boundaries
 
 Electron Main is the stable supervisor: bootstrap, desktop shell, client broker, process supervisor, native session, release coordinator, trusted loader and recovery UI. It never imports domain or service implementations. Business commands run in a persistent Service Host; parsing and discovery run in a separate Extension Host. Main retains the native session when Service is replaced. Gateway test streams use their own HTTP process, not renderer IPC.
@@ -26,7 +28,7 @@ Manual mode never edits global network state. System mode uses loopback proxies;
 
 Only built-in packages may be updated. Each immutable Release Set pins files and compatibility ranges. TUF verifies online root rotation, timestamp/snapshot/targets metadata, expiration and target hashes. Installed receipts re-verify the target signature from the bundled root and the persisted rotation chain on every load, even offline; changing both a bundle and its manifest does not establish trust. Old installed signed versions can run offline after metadata expiry, but expired candidates cannot be newly activated.
 
-The default official signing algorithm is Ed25519. The integration fixture exposed an Electron/BoringSSL incompatibility with the TUF library's default ECDSA verification path; no signature check is bypassed. Local integration tests use Ed25519 for real Electron updates; a CI workflow is not yet configured. Other signing algorithms need explicit runtime qualification before publication.
+The default official signing algorithm is Ed25519. The integration fixture exposed an Electron/BoringSSL incompatibility with the TUF library's default ECDSA verification path; no signature check is bypassed. Local integration tests use Ed25519 for real Electron updates; the macOS verification workflow is configured. New changes still require their own successful run. Other signing algorithms need explicit runtime qualification before publication.
 
 Activation preflights a readonly Service instance. UI-only sets keep the existing Service and kernel; service sets drain, release the old writer, start a fresh epoch and rebuild the renderer. UI readiness requires a snapshot handshake. Startup failures quarantine the set and restore compatible previous code without copying an old database. Draft text stays in stable-shell memory across renderer replacement. Current, previous and quarantined IDs persist outside the signed application. Ordinary business updates never modify app.asar or install native dependencies.
 

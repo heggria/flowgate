@@ -48,20 +48,17 @@ const manifest = {
   ui: "index.html",
   service: "service.cjs",
   extension: "extension.cjs",
+  catalogVersion: 1,
   builtins: [
-    { id: "builtin.subscription", version: "1.0.0" },
-    {
-      id: "builtin.network",
-      version: "1.0.0",
-      capabilities: [],
-      contributions: [],
-    },
-    {
-      id: "builtin.rules",
-      version: "1.0.0",
-      capabilities: [],
-      contributions: [],
-    },
+    ...JSON.parse(
+      await readFile("packages/contracts/src/builtin-catalog.json", "utf8"),
+    ).map(({ id, version, capabilities, permissions, contributions }) => ({
+      id,
+      version,
+      capabilities,
+      permissions,
+      contributions,
+    })),
     {
       id: "internal.gateway-test",
       version: "1.0.0",

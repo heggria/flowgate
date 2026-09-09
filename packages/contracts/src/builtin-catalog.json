@@ -1,0 +1,67 @@
+[
+  {
+    "id": "builtin.subscription",
+    "name": "订阅与节点解析",
+    "description": "导入和刷新 HTTPS 订阅，将受支持的配置转换为节点。",
+    "version": "1.0.0",
+    "required": true,
+    "defaultEnabled": true,
+    "dependencies": [],
+    "capabilities": [],
+    "permissions": ["subscription.https.read"],
+    "contributions": ["command"],
+    "methods": ["subscription.parse", "subscription.fetch"]
+  },
+  {
+    "id": "builtin.rules",
+    "name": "规则集解析",
+    "description": "读取域名列表和受支持的 sing-box 规则集，校验后更新分流规则。",
+    "version": "1.0.0",
+    "required": true,
+    "defaultEnabled": true,
+    "dependencies": [],
+    "capabilities": [],
+    "permissions": [],
+    "contributions": ["command"],
+    "methods": ["ruleset.parse"]
+  },
+  {
+    "id": "builtin.network",
+    "name": "系统网络发现",
+    "description": "观察本机接口、路由、DNS 与系统代理，为网络状态和冲突提示提供依据。",
+    "version": "1.0.0",
+    "required": true,
+    "defaultEnabled": true,
+    "dependencies": [],
+    "capabilities": [],
+    "permissions": ["system.network.read"],
+    "contributions": ["command"],
+    "methods": ["network.inspect"]
+  },
+  {
+    "id": "builtin.tailscale",
+    "name": "Tailscale 状态诊断",
+    "description": "通过本机应用和 CLI 读取 Tailscale 运行状态；不读取 Peer 清单或修改 VPN 设置。",
+    "version": "1.0.0",
+    "required": false,
+    "defaultEnabled": true,
+    "dependencies": ["builtin.network"],
+    "capabilities": [],
+    "permissions": ["application.status.read"],
+    "contributions": ["command"],
+    "methods": ["diagnostic.tailscale"]
+  },
+  {
+    "id": "builtin.singbox",
+    "name": "GUI.for.SingBox 状态诊断",
+    "description": "检查标准安装目录和相关进程，辅助判断外部代理是否运行；不读取订阅或控制令牌。",
+    "version": "1.0.0",
+    "required": false,
+    "defaultEnabled": true,
+    "dependencies": ["builtin.network"],
+    "capabilities": [],
+    "permissions": ["application.status.read"],
+    "contributions": ["command"],
+    "methods": ["diagnostic.singbox"]
+  }
+]

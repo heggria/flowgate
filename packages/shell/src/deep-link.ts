@@ -6,6 +6,7 @@ const routes = new Set([
   "network",
   "activity",
   "settings",
+  "extensions",
 ]);
 export function deepLinkRoute(input: string): string | undefined {
   if (

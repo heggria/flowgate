@@ -1,3 +1,4 @@
+import { isolateProxyPort } from "./proxy-fixture.mjs";
 import { _electron as electron } from "playwright";
 import { createServer } from "node:http";
 import { execFile } from "node:child_process";
@@ -33,6 +34,7 @@ try {
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.getByRole("heading", { name: "概览", exact: true }).waitFor();
+  const listenPort = await isolateProxyPort(page);
   await page.screenshot({ path: "work/ui-empty.png" });
   await page.getByRole("button", { name: "启动代理", exact: true }).click();
   await page.getByRole("button", { name: "停止代理", exact: true }).waitFor();
@@ -44,7 +46,7 @@ try {
     "--noproxy",
     "",
     "--proxy",
-    "http://127.0.0.1:17890",
+    `http://127.0.0.1:${listenPort}`,
     `http://127.0.0.1:${origin.address().port}/stream`,
     "--output",
     "work/ui-stream.bin",

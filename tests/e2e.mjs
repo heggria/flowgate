@@ -1,3 +1,5 @@
+import { openNodeImport, openRuleEditor } from "./ui-fixtures.mjs";
+import { isolateProxyPort } from "./proxy-fixture.mjs";
 import { createServer } from "node:http";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -23,7 +25,9 @@ try {
   await page
     .getByRole("heading", { name: "概览" })
     .waitFor({ timeout: 30000 });
+  const listenPort = await isolateProxyPort(page);
   await page.getByRole("button", { name: "节点与订阅", exact: false }).click();
+  await openNodeImport(page);
   await page
     .getByRole("textbox", { name: "订阅链接或配置" })
     .fill(
@@ -40,10 +44,13 @@ try {
     );
   await page.getByRole("button", { name: "导入节点", exact: true }).click();
   await page.getByText("Local test", { exact: true }).waitFor();
+  await page.getByRole("dialog").waitFor({ state: "hidden" });
   await page.getByRole("button", { name: "分流规则", exact: false }).click();
+  await openRuleEditor(page);
   await page.getByRole("textbox", { name: "匹配内容" }).fill("example.com");
-  await page.getByRole("button", { name: "添加规则" }).click();
+  await page.getByRole("button", { name: "添加规则", exact: true }).click();
   await page.getByText("example.com", { exact: true }).waitFor();
+  await page.getByRole("dialog").waitFor({ state: "hidden" });
 
   await page.getByRole("textbox", { name: "目标域名" }).fill("www.example.com");
   await page.getByRole("button", { name: "检查路径" }).click();
@@ -63,7 +70,7 @@ try {
       "--noproxy",
       "",
       "--proxy",
-      "http://127.0.0.1:17890",
+      `http://127.0.0.1:${listenPort}`,
       `http://127.0.0.1:${originPort}`,
     ]);
   assert.equal((await request()).stdout, "flowgate-e2e-origin");
