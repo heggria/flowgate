@@ -232,10 +232,17 @@ try {
     ),
     true,
   );
+  // Exercise an unavailable catalog deterministically, even with a configured real feed.
+  await app.evaluate(({ session }) => {
+    session.defaultSession.webRequest.onBeforeRequest(
+      { urls: ["https://*/*"] },
+      (_details, done) => done({ cancel: true }),
+    );
+  });
   await page.getByRole("button", { name: "检查更新", exact: true }).click();
   await page
     .getByRole("status")
-    .filter({ hasText: "官方更新源尚未配置" })
+    .filter({ hasText: /官方更新源尚未配置|ERR_BLOCKED_BY_CLIENT/ })
     .waitFor();
   assert.equal(
     (await snapshot()).extensions.every((entry) => entry.status === "ready"),
