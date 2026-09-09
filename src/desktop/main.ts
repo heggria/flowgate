@@ -5,7 +5,7 @@ import { UpdateTrace } from "../../packages/shell/src/update-trace";
 import { randomUUID } from "node:crypto";
 import { supervisedVerification } from "../../packages/release/src/verification";
 import { DraftStore } from "../../packages/shell/src/drafts";
-import { app, ipcMain, powerMonitor, safeStorage } from "electron";
+import { app, ipcMain, powerMonitor, safeStorage, net } from "electron";
 import { join } from "node:path";
 import { mkdir, readFile, unlink } from "node:fs/promises";
 import { ProcessSupervisor } from "../../packages/shell/src/supervisor";
@@ -290,6 +290,7 @@ else {
         join(data, "releases"),
         updateConfig,
         supervisedVerification(join(__dirname, "verification.cjs")),
+        (input, init) => net.fetch(input as string, init),
       );
       await releases.init();
       let rollbackDirectory = currentDirectory,

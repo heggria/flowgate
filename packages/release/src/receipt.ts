@@ -1,11 +1,41 @@
 import { Metadata, MetadataKind } from "@tufjs/models";
 import { DefaultFetcher } from "tuf-js/dist/fetcher";
+import { DownloadHTTPError } from "tuf-js/dist/error";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 export class RecordingFetcher extends DefaultFetcher {
-  constructor(readonly directory: string) {
+  constructor(
+    readonly directory: string,
+    readonly transport?: typeof globalThis.fetch,
+  ) {
     super({ timeout: 15000, retry: 1 });
+  }
+  override async fetch(
+    url: string,
+  ): Promise<ReadableStream<Uint8Array<ArrayBuffer>>> {
+    if (!this.transport) return super.fetch(url);
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const response = await this.transport(url, {
+          signal: AbortSignal.timeout(15000),
+        });
+        if (!response.ok || !response.body) {
+          await response.body?.cancel();
+          throw new DownloadHTTPError(
+            "Failed to download update metadata or target",
+            response.status,
+          );
+        }
+        return response.body;
+      } catch (error) {
+        if (
+          attempt >= 1 ||
+          (error instanceof DownloadHTTPError && error.statusCode < 500)
+        )
+          throw error;
+      }
+    }
   }
   override async downloadBytes(url: string, maxLength: number) {
     const bytes = await super.downloadBytes(url, maxLength);

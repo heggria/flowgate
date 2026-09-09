@@ -1,0 +1,52 @@
+name: Refresh business update metadata
+on:
+  schedule:
+    - cron: "25 */6 * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: business-metadata-publisher
+  cancel-in-progress: false
+jobs:
+  refresh:
+    if: github.repository == 'heggria/flowgate'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: main
+          path: source
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: updates
+          path: repository
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: source/.node-version
+      - run: npm ci --ignore-scripts
+        working-directory: source
+      - name: Refresh using online roles only
+        working-directory: source
+        env:
+          SNAPSHOT_KEY: ${{ secrets.FLOWGATE_TUF_SNAPSHOT_KEY }}
+          TIMESTAMP_KEY: ${{ secrets.FLOWGATE_TUF_TIMESTAMP_KEY }}
+        run: |
+          set -euo pipefail
+          keydir="$(mktemp -d)"
+          trap 'rm -rf "$keydir"' EXIT
+          chmod 700 "$keydir"
+          umask 077
+          printf '%s' "$SNAPSHOT_KEY" > "$keydir/snapshot.pem"
+          printf '%s' "$TIMESTAMP_KEY" > "$keydir/timestamp.pem"
+          node --import tsx scripts/tuf-cli.mjs refresh ../repository "$keydir" ../refreshed release/trusted-root.json
+          cp -R ../refreshed/metadata/. ../repository/metadata/
+      - name: Publish metadata as one Git commit
+        working-directory: repository
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add metadata
+          git commit -m 'Refresh authenticated update metadata'
+          git push origin HEAD:updates

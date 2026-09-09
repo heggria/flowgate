@@ -1,6 +1,7 @@
 name: Verify FlowGate
 on:
   push:
+    branches-ignore: [updates]
   pull_request:
   workflow_dispatch:
 permissions:
@@ -26,7 +27,7 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: node scripts/check-boundaries.mjs
-      - run: node --test tests/infrastructure.test.mjs
+      - run: node --test tests/infrastructure.test.mjs tests/tuf-cli.test.mjs
       - name: Check changed-file formatting
         env:
           EVENT_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
