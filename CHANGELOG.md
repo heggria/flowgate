@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Authenticated HTTPS business updates, separate signing roles, expiry maintenance, revocation and key rotation; desktop downloads honor system networking.
+
 - Infrastructure hardening: isolated builds, build inventories, application version checks, packaged-app smoke tests and development prerelease automation.
 - Hidden Electron tests and native foreground-activation regression.
 

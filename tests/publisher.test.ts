@@ -14,6 +14,10 @@ import {
   readPublisherRepository,
   type SigningRole,
 } from "../packages/release/src/publisher";
+import {
+  validateRelease,
+  validateReleaseManifest,
+} from "../packages/release/src/loader";
 import type { ReleaseSet } from "../packages/contracts/src/index";
 const keys = () =>
   Object.fromEntries(
@@ -44,6 +48,7 @@ async function fixture() {
     id: "release-one",
     version: 1,
     channel: "preview",
+    platforms: [process.platform === "darwin" ? "linux-x64" : "darwin-arm64"],
     shellApi: { min: 1, max: 1 },
     protocol: 1,
     schema: { min: 1, max: 1 },
@@ -84,6 +89,12 @@ test("publisher separates roles, publishes immutable targets, promotes, renews, 
           f.signers.root,
         ),
       /separate keys/,
+    );
+    assert.throws(() => validateRelease(f.manifest), /平台/);
+    assert.doesNotThrow(() => validateReleaseManifest(f.manifest));
+    assert.throws(
+      () => validateReleaseManifest({ ...f.manifest, platforms: [] }),
+      /平台/,
     );
     const first = await f.publish(f.bootstrap, "first", {
       kind: "release",

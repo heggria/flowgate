@@ -3,7 +3,7 @@ import { lstat, readFile, readdir, realpath } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import type { ReleaseSet } from "../../contracts/src/index";
 import { builtinExtensions } from "../../contracts/src/extensions";
-export function validateRelease(manifest: ReleaseSet) {
+export function validateReleaseManifest(manifest: ReleaseSet) {
   if (
     !manifest ||
     !/^[-\w.]{1,100}$/.test(manifest.id) ||
@@ -27,9 +27,15 @@ export function validateRelease(manifest: ReleaseSet) {
   if (
     manifest.platforms !== undefined &&
     (!Array.isArray(manifest.platforms) ||
-      !manifest.platforms.includes(process.platform + "-" + process.arch))
+      manifest.platforms.length === 0 ||
+      manifest.platforms.length > 20 ||
+      manifest.platforms.some(
+        (platform) =>
+          typeof platform !== "string" ||
+          !/^[a-z0-9]+-[a-z0-9]+$/.test(platform),
+      ))
   )
-    throw new Error("版本不支持当前平台");
+    throw new Error("版本平台声明无效");
   if (
     manifest.components &&
     [
@@ -153,8 +159,30 @@ export function validateRelease(manifest: ReleaseSet) {
   )
     throw new Error("首版仅更新已内置模块");
 }
+// Installation checks the local platform; repository maintenance never executes targets.
+export function validateRelease(manifest: ReleaseSet) {
+  validateReleaseManifest(manifest);
+  if (
+    manifest.platforms &&
+    !manifest.platforms.includes(process.platform + "-" + process.arch)
+  )
+    throw new Error("版本不支持当前平台");
+}
 export async function verifyDirectory(directory: string, manifest: ReleaseSet) {
   validateRelease(manifest);
+  return verifyDirectoryContents(directory, manifest);
+}
+export async function verifyPublishedDirectory(
+  directory: string,
+  manifest: ReleaseSet,
+) {
+  validateReleaseManifest(manifest);
+  return verifyDirectoryContents(directory, manifest);
+}
+async function verifyDirectoryContents(
+  directory: string,
+  manifest: ReleaseSet,
+) {
   const root = await realpath(directory);
   const found = new Set<string>();
   const walk = async (relative: string) => {

@@ -43,6 +43,7 @@ test("publisher CLI, online-only renewal and full key rotation work with the rea
       id: "cli-one",
       version: 1,
       channel: "preview",
+      platforms: ["darwin-arm64"],
       shellApi: { min: 1, max: 1 },
       protocol: 1,
       schema: { min: 1, max: 1 },
