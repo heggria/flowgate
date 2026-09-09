@@ -38,6 +38,7 @@ export class ReleaseManager {
       rootPath: string;
     },
     readonly verify = verifyDirectory,
+    readonly transport?: typeof globalThis.fetch,
   ) {}
   async init() {
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
@@ -97,7 +98,10 @@ export class ReleaseManager {
         throw new Error("缓存根元数据与可信链不一致");
     }
     const updater = new Updater({
-      fetcher: new RecordingFetcher(join(this.directory, "root-chain")),
+      fetcher: new RecordingFetcher(
+        join(this.directory, "root-chain"),
+        this.transport,
+      ),
       metadataDir,
       targetDir: join(this.directory, "downloads"),
       metadataBaseUrl: this.config.metadataUrl,

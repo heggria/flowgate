@@ -1,30 +1,33 @@
 # Release workflow
 
-Status (2026-09-10): the source repository is public at https://github.com/heggria/flowgate and remote macOS verification passed for `fa64a7a` (run 34375563696). The user has deferred Apple certificate/notarization work and dependent privileged acceptance. Keep development packaging available; do not treat certificate availability as a blocker for unrelated work or claim production signing has passed. TUF business-release publishing remains a separate unfinished work item.
+The public source is at https://github.com/heggria/flowgate. Required GitHub checks are `Static checks` and `macOS verification`; main requires a pull request, an up-to-date branch and both passing checks. Force pushes and deletion are disabled, including for administrators.
 
-1. `npm run verify` on macOS arm64. Build output separates fixed shell/native files from `dist/release`.
-2. `node scripts/manifest.mjs <unique-id> <monotonic-version> [stable|preview]` creates an exact Release Set manifest. Never overwrite a published version.
-3. Publish each `dist/release/<file>` as a TUF target `<id>/<file>` and the manifest as `<channel>/release.json`. Use the maintained [TUF on CI](https://github.com/theupdateframework/tuf-on-ci) publisher or another audited TUF repository implementation. Production signing keys must be separate from build jobs. The ephemeral test fixture is not a production signing service.
-4. Use Ed25519 keys with offline root/targets policies, short-lived timestamp metadata, consistent version increments, rotation and revocation procedures. Qualify any alternative signature scheme against Electron's crypto implementation before use.
-5. Embed `release/trusted-root.json` and configure HTTPS URLs in `src/desktop/update-config.json` before building/signing the stable shell. A root or new native capability requires an app release unless allowed by an authenticated TUF root rotation.
-6. Package the app with `npm run package:mac`. The default output is a locally runnable ad-hoc development build. A production Developer ID must sign the bridge as `com.flowgate.bridge`, helper as `com.flowgate.helper`, and kernel as `com.flowgate.kernel`, with one team. Use Electron's supported [macOS signing and notarization workflow](https://www.electronjs.org/docs/latest/tutorial/code-signing) including hardened-runtime/JIT entitlements and nested framework signing; the simple packaging script is not a completed notarization pipeline.
-7. Install the signed app, request helper registration from Settings and approve it in macOS. Perform the outstanding `ACCEPTANCE.md` native/network matrix before a stable release.
-8. Configure the separate Squirrel.Mac HTTPS application feed for full shell/native/Electron upgrades. Business updates do not replace that channel.
-
-Offline catalogs preserve an already verified installed version. A failed candidate is quarantined, not automatically retried. Destructive data migrations are not supported by the ordinary dynamic update channel.
-
-Primary references: [TUF JS](https://github.com/theupdateframework/tuf-js), [sing-box API](https://sing-box.sagernet.org/configuration/service/api/), [sing-box bridge limitations](https://sing-box.sagernet.org/configuration/outbound/bridge/).
-
-Implementation update (2026-09-09): `.github/workflows/verify.yml` now defines the macOS arm64 verification job with pinned action commits, locked dependency installation, SHA-256-checked kernel download, behavioral tests and bounded evidence uploads. The workflow is parsed locally but has not run on GitHub because this workspace has no published repository/run. Runner selection follows [GitHub's runner reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
-
-Production packaging now invokes `@electron/osx-sign` for nested Electron resources with hardened runtime/JIT entitlement, preserves the explicitly signed native identifiers, and verifies the resulting bundle. `FLOWGATE_SIGNING_IDENTITY` selects an installed Developer ID; optional `FLOWGATE_NOTARY_PROFILE` refers to credentials already stored in the local keychain and invokes `@electron/notarize`. No secret is accepted in app UI or committed. This code path remains untested with a real certificate/profile; ad-hoc packaging cannot substitute for signed native acceptance. References: [Electron signing](https://www.electronjs.org/docs/latest/tutorial/code-signing), [osx-sign](https://github.com/electron/osx-sign), [notarize](https://github.com/electron/notarize).
-
-Goal iteration update: release manifests now include publisher/platform/component versions and capability/contribution declarations. A TUF-authenticated `revocations.json` target contains `{ "version": 1, "releases": ["release-id"] }`; the version is monotonic, and revocations are retained even if the replacement download fails. Installed code is not interrupted or silently deleted; the next load rejects a revoked release and the UI offers bundled recovery. Stable/preview selection is available. `npm run verify` now includes all expanded protocol, credential, cancellation, feature/crash, ownership and four update variants. Production publication still requires the external repository/role keys/URLs and Developer ID environment described above.
+Apple certificates/notarization and dependent privileged acceptance are **deferred by the user**. Development packaging and independently signed business updates proceed without them. Do not claim Developer ID, notarization, real privileged TUN/helper acceptance or full application auto-update has passed.
 
 ## Verified development delivery
 
-`Verify FlowGate` now separates static checks from macOS integration and packaged-app verification. The macOS job packages exactly the build inventory it verified, tests the packaged executable without taking foreground focus, and uploads a development ZIP, SHA-256 checksum, source archive and build provenance. It does not require Apple credentials.
+1. Use the pinned runtime from `.node-version` and `npm ci`, then `node scripts/fetch-kernel.mjs`.
+2. Run `npm run verify` on macOS arm64. Build output separates fixed shell/native files from `dist/release`. The build uses a fresh staging directory, rejects missing/wrong-architecture kernel files, and seals exact hashes plus source provenance in `dist/build-manifest.json`.
+3. `npm run package:mac` verifies that inventory, packages the exact build, records FlowGate's own version/build number and includes license notices. Its default output is a locally runnable ad-hoc development build.
+4. `node tests/package.integration.mjs` starts the packaged executable hidden with isolated data and verifies a real proxy request. CI performs this after its behavioral checks, then uploads ZIP, SHA-256 checksum, source archive and provenance.
+5. `Publish verified development build` consumes only a successful **push to this repository's main branch**, never a PR or fork. It publishes immutable `dev-<commit>` prereleases with no stable/latest designation. Existing assets are not overwritten. Failed checks produce no release.
 
-`Publish verified development build` only consumes artifacts from a successful **push to this repository's main branch**, never from a pull request or fork. It publishes an immutable `dev-<commit>` prerelease with no stable/latest designation. Existing release assets are not overwritten. Source commit, development-only status and deferred privileged acceptance are explicit. Failed checks produce no release. A scheduled dependency audit distinguishes unavailable scans from clean results.
+Remote CI results, package checks and release artifacts are distinct evidence. A successful old commit does not validate concurrent uncommitted edits. Local builds record `dirty` status; public CI uses a clean checkout.
 
-These development prereleases do not enable the application's currently disabled business-update source. Production TUF role/key management and HTTPS metadata publishing remain a separate tracked task. Apple signing/notarization and full application auto-update remain deferred.
+## Independently signed business delivery
+
+The real [updates branch](https://github.com/heggria/flowgate/tree/updates) contains TUF metadata and digest-addressed Release Set files. `release/trusted-root.json` and HTTPS URLs in `src/desktop/update-config.json` establish the client trust anchor. The first business release uses verified source `75a07d246abac4e3f1c044d525123c6dedb61fb2`.
+
+See [BUSINESS_UPDATES.md](BUSINESS_UPDATES.md) for exact local signing, publication, promotion, revocation, expiry renewal and old/new double-signed root rotation procedures. Root and targets private keys remain outside the build checkout on the operator machine. Only snapshot/timestamp keys are stored in GitHub secrets; the six-hour refresh workflow cannot sign new executable targets. An expired offline authorization fails closed and requires the local signer.
+
+Release manifests declare publisher, platform, component versions, shell/protocol/schema compatibility and the capability catalog. Every artifact is verified before publication and before client activation. Immutable release records and monotonic versions prevent identity reuse and rollback. Authenticated revocations survive failed replacement downloads. Failed candidates are quarantined; bundled recovery remains available. Destructive data migrations are not supported by ordinary dynamic updates.
+
+`node tests/live-update.integration.mjs` is the explicit real-feed acceptance check: HTTPS download, signature verification, activation, real proxy forwarding and restart from the installed verified release. It uses a hidden isolated Electron instance and is not an ordinary PR network dependency.
+
+## Deferred production application delivery
+
+`FLOWGATE_SIGNING_IDENTITY` selects an installed Developer ID. Production packaging invokes `@electron/osx-sign` for nested Electron resources with hardened runtime/JIT entitlement and preserves the native identifiers `com.flowgate.bridge`, `com.flowgate.helper` and `com.flowgate.kernel` under one team. Optional `FLOWGATE_NOTARY_PROFILE` references credentials already in the local keychain and invokes `@electron/notarize`. No secret is accepted in app UI or committed. This path remains unverified with a real certificate/profile.
+
+After signing, install the app, register/approve its helper and perform the outstanding native/network matrix in [ACCEPTANCE.md](ACCEPTANCE.md). Configure the separate Squirrel.Mac HTTPS application feed for full shell/native/Electron upgrades. Business updates do not replace that channel.
+
+Primary references: [TUF JS](https://github.com/theupdateframework/tuf-js), [Electron signing](https://www.electronjs.org/docs/latest/tutorial/code-signing), [osx-sign](https://github.com/electron/osx-sign), [notarize](https://github.com/electron/notarize).
