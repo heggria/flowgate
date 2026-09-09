@@ -271,7 +271,8 @@ export function compileConfiguration(c: Configuration) {
       })),
     ],
     route: {
-      auto_detect_interface: true,
+      // TUN needs loop prevention. Manual/system listeners must honor OS VPN routes.
+      auto_detect_interface: c.settings.mode === "tun",
       default_domain_resolver: "bootstrap",
       rules: [
         { action: "sniff" },

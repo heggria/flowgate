@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   initialConfiguration,
+  compileConfiguration,
   validateConfiguration,
 } from "../packages/domain/src/configuration";
 import { networkConflicts } from "../packages/domain/src/network-conflicts";
@@ -256,4 +257,14 @@ test("TUN catches remote routed subnet overlap without treating a VPN default ro
       (c) => c.id === "tunnel-default" && c.severity === "warning",
     ),
   );
+});
+
+test("manual and system proxy preserve OS routing while TUN keeps loop protection", () => {
+  const config = initialConfiguration();
+  for (const mode of ["manual", "system", "tun"] as const) {
+    config.settings.mode = mode;
+    const compiled = compileConfiguration(config);
+    assert.equal(compiled.route.auto_detect_interface, mode === "tun");
+    assert.equal(compiled.inbounds[0].type, mode === "tun" ? "tun" : "mixed");
+  }
 });
