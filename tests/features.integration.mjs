@@ -60,11 +60,17 @@ try {
     has: page.getByRole("heading", { name: /^规则集来源/ }),
   });
   await source.getByRole("button", { name: "添加规则集", exact: true }).click();
-  await source.getByLabel("名称", { exact: true }).fill("规则测试来源");
-  await source
+  const importDialog = page.getByRole("dialog", {
+    name: "添加规则集",
+    exact: true,
+  });
+  await importDialog.getByLabel("名称", { exact: true }).fill("规则测试来源");
+  await importDialog
     .getByLabel("HTTPS 来源")
     .fill(`https://localhost:${server.address().port}/rules`);
-  await source.getByRole("button", { name: "导入规则集", exact: true }).click();
+  await importDialog
+    .getByRole("button", { name: "导入规则集", exact: true })
+    .click();
   await source.getByText("规则测试来源", { exact: true }).waitFor();
   let snapshot = await page.evaluate(() => window.flowgate.request("snapshot"));
   assert.equal(snapshot.configuration.ruleSources[0].count, 2);

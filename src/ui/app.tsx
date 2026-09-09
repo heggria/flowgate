@@ -379,6 +379,13 @@ runtime.trace.onChange = () => {
       await window.shell.request("ui.trace", event);
     });
 };
+const workspaceRoot = createRoot(document.getElementById("root")!);
+workspaceRoot.render(
+  <div className="empty loadingstate" role="status">
+    <span className="loadingring" />
+    正在连接服务…
+  </div>,
+);
 void (async () => {
   [latestSnapshot, rendererContext] = await Promise.all([
     client.request<AppSnapshot>("snapshot"),
@@ -391,7 +398,7 @@ void (async () => {
     await runtime.stop();
     await traceFlush;
   });
-  createRoot(document.getElementById("root")!).render(
+  workspaceRoot.render(
     <App
       routes={runtime.entries
         .filter((e) => e.kind === "route")
@@ -399,6 +406,9 @@ void (async () => {
     />,
   );
 })().catch(() => {
-  document.getElementById("root")!.textContent =
-    "工作区启动失败，请重新打开应用或使用恢复页面。";
+  workspaceRoot.render(
+    <div className="empty" role="alert">
+      工作区启动失败，请重新打开应用或使用恢复页面。
+    </div>,
+  );
 });
