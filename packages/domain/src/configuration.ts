@@ -1,4 +1,5 @@
 import type { Configuration, NodeConfig } from "../../contracts/src/index";
+import { isLoopbackHost } from "./endpoint";
 export function initialConfiguration(): Configuration {
   return {
     schema: 1,
@@ -40,7 +41,7 @@ export function validateConfiguration(c: Configuration): void {
   for (const n of c.nodes) {
     validateNode(n);
     if (
-      ["localhost", "127.0.0.1", "::1", "[::1]"].includes(n.server) &&
+      isLoopbackHost(n.server) &&
       n.port === c.settings.listenPort
     )
       throw new Error("节点指向本应用监听端口，会形成代理循环");

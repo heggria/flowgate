@@ -117,6 +117,7 @@ export interface KernelState {
   operationId?: string;
   message?: string;
   systemControl: boolean;
+  systemProxyOwned?: boolean;
   version?: string;
 }
 export interface SystemProxyObservation {

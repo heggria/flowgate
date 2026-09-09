@@ -27,7 +27,7 @@ export function networkConflicts(
   if (
     c.settings.mode === "system" &&
     observed.proxyEnabled &&
-    !kernel.systemControl
+    kernel.systemProxyOwned !== true
   )
     issues.push({
       id: "existing-proxy",

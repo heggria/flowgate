@@ -40,6 +40,7 @@ final class NetworkEngine {
         var value: [String: Any] = ["status": kernel?.isRunning == true ? "running" : lastError == nil ? "stopped" : "failed", "systemControl": privileged, "version": "1.14.0"]
         if let process = kernel, process.isRunning { value["pid"] = process.processIdentifier; value["appliedRevision"] = revision }
         value["operationId"] = operation
+        value["systemProxyOwned"] = privileged && mode == "system" && kernel?.isRunning == true && proxies.isCurrentOwner(operationId: operation ?? "")
         value["message"] = lastError ?? (privileged ? "系统辅助服务已连接" : "手动代理可用；系统代理与 TUN 需要批准特权辅助服务")
         return value
     }
