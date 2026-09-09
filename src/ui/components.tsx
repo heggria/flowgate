@@ -1,5 +1,13 @@
 import { client } from "../../packages/client/src/index";
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useId,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { createPortal } from "react-dom";
 import type { Configuration } from "../../packages/contracts/src/index";
 import { Icon } from "./icons";
 
@@ -54,6 +62,56 @@ export function useTask() {
   };
   return { pending, error, execute, setError, request, cancel };
 }
+/** Resolve menu items to their persistent trigger before the popup closes. */
+export function focusReturnTarget(
+  element: HTMLElement | null,
+): HTMLElement | null {
+  return (
+    element?.closest(".actionmenu")?.querySelector<HTMLElement>("summary") ??
+    element
+  );
+}
+export function restoreFocus(element: HTMLElement | null) {
+  if (element?.isConnected && element.getClientRects().length)
+    element.focus({ preventScroll: true });
+  else {
+    const heading = document.querySelector<HTMLElement>(".content h1");
+    if (heading) {
+      heading.tabIndex = -1;
+      heading.focus({ preventScroll: true });
+    }
+  }
+}
+/** Both choice and action popovers use the same viewport bounds and flip behavior. */
+function placePopover(
+  anchor: HTMLElement,
+  popup: HTMLElement,
+  minWidth: number,
+  maxHeight: number,
+  alignEnd = false,
+) {
+  const rect = anchor.getBoundingClientRect(),
+    edge = 12,
+    gap = 6;
+  const width = Math.min(Math.max(rect.width, minWidth), innerWidth - edge * 2);
+  const below = Math.max(0, innerHeight - rect.bottom - edge - gap);
+  const above = Math.max(0, rect.top - edge - gap);
+  const upward = below < Math.min(230, maxHeight) && above > below;
+  const height = Math.min(
+    maxHeight,
+    Math.max(above, below),
+    innerHeight - edge * 2,
+  );
+  Object.assign(popup.style, {
+    width: `${width}px`,
+    maxHeight: `${height}px`,
+    left: `${Math.max(edge, Math.min(alignEnd ? rect.right - width : rect.left, innerWidth - width - edge))}px`,
+  });
+  popup.style.setProperty("--options-height", `${Math.max(24, height - 52)}px`);
+  const actualHeight = popup.getBoundingClientRect().height;
+  popup.style.top = `${Math.max(edge, Math.min(upward ? rect.top - actualHeight - gap : rect.bottom + gap, innerHeight - actualHeight - edge))}px`;
+}
+
 export function Modal({
   title,
   description,
@@ -76,7 +134,7 @@ export function Modal({
     descriptionId = useId();
   useEffect(() => {
     const element = ref.current!,
-      trigger = document.activeElement as HTMLElement | null;
+      trigger = focusReturnTarget(document.activeElement as HTMLElement | null);
     element.showModal();
     const firstField =
       element.querySelector<HTMLElement>("[data-autofocus]") ??
@@ -86,10 +144,10 @@ export function Modal({
     firstField?.focus({ preventScroll: true });
     return () => {
       element.close();
-      if (trigger?.isConnected) trigger.focus({ preventScroll: true });
+      restoreFocus(trigger);
     };
   }, []);
-  return (
+  return createPortal(
     <dialog
       ref={ref}
       className="taskdialog"
@@ -129,7 +187,8 @@ export function Modal({
           </div>
         ) : null}
       </div>
-    </dialog>
+    </dialog>,
+    document.body,
   );
 }
 export function Field({
@@ -334,19 +393,6 @@ export function Combobox({
   };
   const show = () => {
     if (!button.current || !popover.current) return;
-    const rect = button.current.getBoundingClientRect(),
-      width = Math.min(Math.max(rect.width, 280), innerWidth - 32);
-    const below = innerHeight - rect.bottom - 18;
-    const above = rect.top - 18;
-    const upward = below < 230 && above > below;
-    const height = Math.min(316, Math.max(160, upward ? above : below));
-    Object.assign(popover.current.style, {
-      width: `${width}px`,
-      left: `${Math.min(rect.left, innerWidth - width - 16)}px`,
-      top: `${upward ? Math.max(16, rect.top - height - 6) : rect.bottom + 6}px`,
-      maxHeight: `${height}px`,
-    });
-    popover.current.style.setProperty("--options-height", `${height - 52}px`);
     setQuery("");
     setActive(
       Math.max(
@@ -355,14 +401,26 @@ export function Combobox({
       ),
     );
     popover.current.showPopover();
+    placePopover(button.current, popover.current, 280, 316);
     setOpen(true);
     input.current?.focus();
   };
+  useLayoutEffect(() => {
+    if (open && button.current && popover.current)
+      placePopover(button.current, popover.current, 280, 316);
+  }, [open, query, options.length]);
   useEffect(() => {
     if (!open) return;
     const close = () => dismiss(false);
+    const scroll = (event: Event) => {
+      if (!popover.current?.contains(event.target as Node)) close();
+    };
     window.addEventListener("resize", close);
-    return () => window.removeEventListener("resize", close);
+    window.addEventListener("scroll", scroll, true);
+    return () => {
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", scroll, true);
+    };
   }, [open]);
   return (
     <div className="combobox">
@@ -486,42 +544,219 @@ export function ActionMenu({
   label: string;
   children: ReactNode;
 }) {
-  const ref = useRef<HTMLDetailsElement>(null);
+  const ref = useRef<HTMLDetailsElement>(null),
+    popup = useRef<HTMLDivElement>(null);
+  const pendingDirection = useRef<"first" | "last">("first");
+  const [open, setOpen] = useState(false);
+  const close = (restore = false) => {
+    popup.current?.hidePopover();
+    ref.current?.removeAttribute("open");
+    setOpen(false);
+    if (restore) ref.current?.querySelector<HTMLElement>("summary")?.focus();
+  };
   useEffect(() => {
-    const close = (e: PointerEvent) => {
-      if (!ref.current?.contains(e.target as Node))
-        ref.current?.removeAttribute("open");
+    if (!open) return;
+    const resize = () => close();
+    const scroll = (event: Event) => {
+      if (!popup.current?.contains(event.target as Node)) close();
     };
-    document.addEventListener("pointerdown", close);
-    return () => document.removeEventListener("pointerdown", close);
-  }, []);
+    window.addEventListener("resize", resize);
+    window.addEventListener("scroll", scroll, true);
+    return () => {
+      window.removeEventListener("resize", resize);
+      window.removeEventListener("scroll", scroll, true);
+    };
+  }, [open]);
   return (
     <details
       ref={ref}
       className="actionmenu"
-      onKeyDown={(e) => {
-        if (e.key === "Escape") {
-          e.stopPropagation();
-          ref.current?.removeAttribute("open");
-          ref.current?.querySelector("summary")?.focus();
-        }
+      onToggle={(event) => {
+        if (event.target !== event.currentTarget) return;
+        if (ref.current?.open && popup.current) {
+          popup.current.showPopover();
+          placePopover(
+            ref.current.querySelector("summary")!,
+            popup.current,
+            152,
+            320,
+            true,
+          );
+          setOpen(true);
+          const buttons = popup.current.querySelectorAll<HTMLButtonElement>(
+            "button:not(:disabled)",
+          );
+          buttons[
+            pendingDirection.current === "last" ? buttons.length - 1 : 0
+          ]?.focus({ preventScroll: true });
+          pendingDirection.current = "first";
+        } else close();
       }}
     >
-      <summary aria-label={label} title={label}>
+      <summary
+        aria-label={label}
+        title={label}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+            event.preventDefault();
+            pendingDirection.current =
+              event.key === "ArrowUp" ? "last" : "first";
+            ref.current!.open = true;
+          }
+          if (event.key === "Escape") {
+            event.preventDefault();
+            close(true);
+          }
+        }}
+      >
         •••
       </summary>
       <div
+        ref={popup}
+        popover="auto"
         className="actionitems"
-        onClick={(e) => {
+        onToggle={(event) => {
           if (
-            (e.target as Element).closest("button:not(:disabled)") &&
-            !ref.current?.querySelector("dialog[open]")
-          )
+            event.target === event.currentTarget &&
+            event.newState === "closed"
+          ) {
             ref.current?.removeAttribute("open");
+            setOpen(false);
+          }
+        }}
+        onKeyDown={(event) => {
+          if (!popup.current?.contains(event.target as Node)) return;
+          if (event.key === "Escape") {
+            event.preventDefault();
+            event.stopPropagation();
+            close(true);
+          }
+          if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+            event.preventDefault();
+            const buttons = Array.from(
+              popup.current?.querySelectorAll<HTMLButtonElement>(
+                "button:not(:disabled)",
+              ) ?? [],
+            );
+            const index = buttons.indexOf(
+              document.activeElement as HTMLButtonElement,
+            );
+            buttons[
+              event.key === "Home"
+                ? 0
+                : event.key === "End"
+                  ? buttons.length - 1
+                  : (index +
+                      (event.key === "ArrowDown" ? 1 : -1) +
+                      buttons.length) %
+                    buttons.length
+            ]?.focus();
+          }
+          if (event.key === "Tab") close(true);
+        }}
+        onClick={(event) => {
+          if (!popup.current?.contains(event.target as Node)) return;
+          if ((event.target as Element).closest("button:not(:disabled)"))
+            close();
         }}
       >
         {children}
       </div>
+    </details>
+  );
+}
+
+/** Resource controls share accessible labels, clear behavior and visual tokens. */
+export function SearchField({
+  label,
+  placeholder,
+  value,
+  onChange,
+  clearLabel,
+}: {
+  label: string;
+  placeholder: string;
+  value: string;
+  onChange: (value: string) => void;
+  clearLabel?: string;
+}) {
+  return (
+    <div className="searchfield">
+      <Icon name="search" size={15} />
+      <input
+        type="text"
+        aria-label={label}
+        placeholder={placeholder}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      {value ? (
+        <button
+          type="button"
+          aria-label={clearLabel ?? `清空${label}`}
+          onClick={() => onChange("")}
+        >
+          <Icon name="close" size={13} />
+        </button>
+      ) : null}
+    </div>
+  );
+}
+export function EmptyState({
+  title,
+  description,
+  icon = "nodes",
+  children,
+  compact = false,
+}: {
+  title: string;
+  description?: string;
+  icon?: string;
+  children?: ReactNode;
+  compact?: boolean;
+}) {
+  return (
+    <div className={`emptystate ${compact ? "compactempty" : "resourceempty"}`}>
+      <span className="emptyglyph">
+        <Icon name={icon} size={22} />
+      </span>
+      <strong>{title}</strong>
+      {description ? <p>{description}</p> : null}
+      {children}
+    </div>
+  );
+}
+export function StatusBadge({
+  children,
+  tone = "neutral",
+  wrap = false,
+}: {
+  children: ReactNode;
+  wrap?: boolean;
+  tone?: "neutral" | "success" | "warning" | "danger";
+}) {
+  return (
+    <span className={`badge badge-${tone} ${wrap ? "badge-wrap" : ""}`}>
+      {children}
+    </span>
+  );
+}
+export function Disclosure({
+  title,
+  children,
+  className = "",
+}: {
+  title: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <details className={`disclosure ${className}`}>
+      <summary>
+        <Icon name="chevron" size={12} />
+        <span>{title}</span>
+      </summary>
+      <div className="disclosurebody">{children}</div>
     </details>
   );
 }

@@ -244,6 +244,7 @@ for (const variant of process.env.FLOWGATE_UPDATE_VARIANTS?.split(",") ?? [
         .getByRole("navigation")
         .getByRole("button", { name: "扩展", exact: true })
         .click();
+      await page.getByRole("button", { name: "管理更新", exact: true }).click();
       await page.getByRole("button", { name: "检查更新", exact: true }).click();
       await page
         .getByRole("region", { name: "候选版本详情" })

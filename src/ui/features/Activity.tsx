@@ -1,3 +1,11 @@
+import {
+  PageHeader,
+  Disclosure,
+  EmptyState,
+  StatusBadge,
+  TaskError,
+  useTask,
+} from "../components";
 import { useState } from "react";
 import type { TraceContext } from "../../../packages/contracts/src/index";
 import type { FeatureProps } from "../modules";
@@ -10,40 +18,43 @@ export function Activity({ snapshot }: FeatureProps) {
       context: Partial<TraceContext>;
     }[]
   >([]);
-  const [error, setError] = useState("");
+  const task = useTask();
   return (
     <>
-      <h1>操作记录</h1>
-      <details>
-        <summary>服务诊断</summary>
+      <PageHeader
+        title="操作记录"
+        description="查看操作结果，展开详情追踪异常。"
+      />
+      <Disclosure title="服务诊断">
         <button
           className="secondary"
-          onClick={() => {
-            void window.shell
-              .request("diagnostics.trace")
-              .then((value) => {
-                setEvents(value as typeof events);
-                setError("");
-              })
-              .catch(() => setError("读取诊断失败"));
-          }}
+          aria-disabled={task.pending}
+          aria-busy={task.pending}
+          onClick={() =>
+            void task.execute(async () => {
+              setEvents(
+                (await window.shell.request(
+                  "diagnostics.trace",
+                )) as typeof events,
+              );
+            })
+          }
         >
-          读取最近调用
+          {task.pending ? "读取中…" : "读取最近调用"}
         </button>
-        {error ? <p role="alert">{error}</p> : null}
+        <TaskError message={task.error} />
         {events
           .slice()
           .reverse()
           .map((event, index) => (
-            <details key={index}>
-              <summary>
-                {new Date(event.time).toLocaleTimeString()} · {event.name} ·{" "}
-                {event.status}
-              </summary>
+            <Disclosure
+              key={index}
+              title={`${new Date(event.time).toLocaleTimeString()} · ${event.name} · ${event.status}`}
+            >
               <pre>{JSON.stringify(event.context, null, 2)}</pre>
-            </details>
+            </Disclosure>
           ))}
-      </details>
+      </Disclosure>
 
       {snapshot.operations.length ? (
         snapshot.operations.map((o) => (
@@ -66,13 +77,20 @@ export function Activity({ snapshot }: FeatureProps) {
               <small>
                 {new Date(o.startedAt).toLocaleString()} · 修订 {o.revision}
               </small>
-              <details>
-                <summary>详细信息</summary>
+              <Disclosure title="详细信息">
                 <code>{o.id}</code>
                 <p>追踪编号：{o.traceId}</p>
-              </details>
+              </Disclosure>
             </div>
-            <span className="badge">
+            <StatusBadge
+              tone={
+                o.state === "succeeded"
+                  ? "success"
+                  : o.state === "failed"
+                    ? "danger"
+                    : "warning"
+              }
+            >
               {
                 {
                   pending: "处理中",
@@ -81,12 +99,22 @@ export function Activity({ snapshot }: FeatureProps) {
                   unknown: "结果未知",
                 }[o.state]
               }
-            </span>
-            {o.message ? <p>{o.message}</p> : null}
+            </StatusBadge>
+            {o.message ? (
+              <p
+                className={o.state === "failed" ? "taskerror" : "inlinestatus"}
+              >
+                {o.message}
+              </p>
+            ) : null}
           </section>
         ))
       ) : (
-        <div className="empty">暂无操作记录</div>
+        <EmptyState
+          title="暂无操作记录"
+          description="启动代理、导入资源或保存配置后，结果会显示在这里。"
+          icon="activity"
+        />
       )}
     </>
   );

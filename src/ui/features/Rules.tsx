@@ -1,3 +1,4 @@
+import { EmptyState } from "../components";
 import { useState } from "react";
 import { useDraft } from "../drafts";
 import type {
@@ -140,13 +141,11 @@ export function Rules({
             </div>
           ))
         ) : (
-          <div className="empty emptystate resourceempty">
-            <span className="emptyglyph">
-              <Icon name="rules" size={23} />
-            </span>
-            <strong>为不同流量选择路径</strong>
-            <p>按域名、IP 网段或进程分流，未匹配的流量使用默认出口。</p>
-          </div>
+          <EmptyState
+            title="为不同流量选择路径"
+            description="按域名、IP 网段或进程分流，未匹配的流量使用默认出口。"
+            icon="rules"
+          />
         )}
         <div className="defaultrule">
           <span className="rulekind">默认规则</span>
@@ -246,20 +245,16 @@ function RuleEditor({
       >
         <div className="rulefields">
           <Field id="rule-kind" label="当目标匹配">
-            <select
+            <Combobox
               id="rule-kind"
-              aria-label="匹配类型"
+              label="匹配类型"
               value={kind}
-              onChange={(e) =>
-                draft.change({ kind: e.target.value as Rule["kind"] })
-              }
-            >
-              {Object.entries(kindName).map(([id, label]) => (
-                <option key={id} value={id}>
-                  {label}
-                </option>
-              ))}
-            </select>
+              options={Object.entries(kindName).map(([value, label]) => ({
+                value,
+                label,
+              }))}
+              onChange={(kind) => draft.change({ kind: kind as Rule["kind"] })}
+            />
           </Field>
           <Field id="rule-value" label="匹配内容">
             <input

@@ -1,4 +1,13 @@
-import { useState } from "react";
+import {
+  PageHeader,
+  SearchField,
+  EmptyState,
+  StatusBadge,
+  Disclosure,
+  TaskError,
+} from "../components";
+import { useEffect, useRef, useState } from "react";
+import { Icon } from "../icons";
 import { client } from "../../../packages/client/src/index";
 import type { ExtensionState } from "../../../packages/contracts/src/extensions";
 import type { TraceContext } from "../../../packages/contracts/src/index";
@@ -13,6 +22,10 @@ const labels: Record<ExtensionState["status"], string> = {
   failed: "运行异常",
   unavailable: "状态未知",
 };
+const summaries: Record<string, string> = {
+  "builtin.tailscale": "检查 Tailscale 连接，帮助排查网络共存问题。",
+  "builtin.singbox": "检查 GUI.for.SingBox 是否安装和运行。",
+};
 const permissions: Record<string, string> = {
   "subscription.https.read": "下载你提供的 HTTPS 订阅；不执行其中的代码。",
   "system.network.read": "只读查看本机接口、路由、DNS 和系统代理。",
@@ -26,267 +39,378 @@ type Event = {
 };
 export function Extensions({ snapshot, run, busy }: FeatureProps) {
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState("all");
   const [selected, setSelected] = useState("");
+  const [showCore, setShowCore] = useState(false);
+  const [showUpdates, setShowUpdates] = useState(false);
+  const [pending, setPending] = useState("");
+  const operation = useRef(false);
+  const [feedback, setFeedback] = useState<Record<string, string>>({});
+  const opener = useRef<HTMLButtonElement | null>(null);
+  const detailHeading = useRef<HTMLHeadingElement | null>(null);
   const [events, setEvents] = useState<Event[]>([]);
   const [eventOwner, setEventOwner] = useState("");
   const entries = snapshot.extensions ?? [];
-  const visible = entries.filter(
-    (entry) =>
-      (filter === "all" ||
-        (filter === "core" ? entry.required : !entry.required)) &&
-      `${entry.name} ${entry.id} ${entry.description}`
-        .toLowerCase()
-        .includes(query.toLowerCase()),
+  const visible = entries.filter((entry) =>
+    `${entry.name} ${entry.description}`
+      .toLowerCase()
+      .includes(query.toLowerCase()),
   );
-  const detail = visible.find((entry) => entry.id === selected) ?? visible[0];
-  const change = (entry: ExtensionState) =>
-    run(() =>
-      client.request("extensions.setEnabled", {
-        id: entry.id,
-        enabled: entry.status === "failed" ? true : !entry.desiredEnabled,
-        revision: snapshot.extensionRevision,
-      }),
-    );
-  const unavailable = entries.some(
-    (entry) => entry.status === "failed" || entry.status === "unavailable",
-  );
-  return (
-    <>
-      <div className="pageintro">
-        <h1>扩展</h1>
-        <p>查看内置能力、运行状态与访问范围，管理可选扩展。</p>
-      </div>
-      <div className="extensionoverview">
-        <span>{entries.length} 个内置扩展</span>
-        <span>
-          {entries.filter((entry) => entry.status === "ready").length} 个运行中
+  const optional = visible.filter((entry) => !entry.required);
+  const core = visible.filter((entry) => entry.required);
+  const detail = entries.find((entry) => entry.id === selected);
+  const unhealthy = (entry: ExtensionState) =>
+    ["failed", "unavailable"].includes(entry.status);
+  const coreError = core.some(unhealthy);
+  const unavailable = entries.some(unhealthy);
+  const closeDetail = () => {
+    setSelected("");
+    requestAnimationFrame(() => opener.current?.focus());
+  };
+  useEffect(() => {
+    if (!selected) return;
+    detailHeading.current?.focus({ preventScroll: true });
+    const escape = (event: KeyboardEvent) => {
+      if (
+        event.key !== "Escape" ||
+        event.defaultPrevented ||
+        document.querySelector("dialog[open]")
+      )
+        return;
+      closeDetail();
+    };
+    document.addEventListener("keydown", escape);
+    return () => document.removeEventListener("keydown", escape);
+  }, [selected]);
+  const change = async (entry: ExtensionState, retry = false) => {
+    if (
+      operation.current ||
+      busy ||
+      ["starting", "draining", "unavailable"].includes(entry.status)
+    )
+      return;
+    operation.current = true;
+    setPending(entry.id);
+    setFeedback((current) => ({ ...current, [entry.id]: "" }));
+    try {
+      await run(async () => {
+        try {
+          await client.request("extensions.setEnabled", {
+            id: entry.id,
+            enabled: retry || !entry.desiredEnabled,
+            revision: snapshot.extensionRevision,
+          });
+        } catch (error) {
+          setFeedback((current) => ({
+            ...current,
+            [entry.id]:
+              error instanceof Error ? error.message : "操作失败，请重试。",
+          }));
+        }
+      });
+    } finally {
+      operation.current = false;
+      setPending("");
+    }
+  };
+  const row = (entry: ExtensionState) => {
+    const changing =
+      pending === entry.id || ["starting", "draining"].includes(entry.status);
+    const locked =
+      busy || !!pending || entry.status === "unavailable" || changing;
+    return (
+      <article
+        key={entry.id}
+        aria-label={entry.name}
+        className={`extensioncard ${selected === entry.id ? "selected" : ""}`}
+      >
+        <span className="extensionicon" aria-hidden="true">
+          <Icon name={entry.required ? "extensions" : "network"} size={20} />
         </span>
-        <span>官方内置 · 随版本组合更新</span>
-      </div>
-      <div className="tabletools extensionfilters">
-        <input
-          aria-label="搜索扩展"
-          placeholder="搜索扩展名称或功能"
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-        />
-        <select
-          aria-label="扩展类型"
-          value={filter}
-          onChange={(event) => setFilter(event.target.value)}
-        >
-          <option value="all">全部扩展</option>
-          <option value="core">核心能力</option>
-          <option value="optional">可选扩展</option>
-        </select>
-      </div>
-      {!entries.length ? (
-        <div className="empty">
-          当前服务未提供扩展目录。请通过设置检查完整应用更新。
-        </div>
-      ) : !visible.length ? (
-        <div className="empty">
-          没有匹配的扩展
+        <div className="extensioncopy">
           <button
-            className="quiet"
-            onClick={() => {
-              setQuery("");
-              setFilter("all");
+            className="extensionname"
+            aria-label={`查看 ${entry.name} 详情`}
+            aria-expanded={selected === entry.id}
+            onClick={(event) => {
+              opener.current = event.currentTarget;
+              setSelected(entry.id);
             }}
           >
-            清除筛选
+            <h3>{entry.name}</h3>
+            <Icon name="chevron" size={12} />
           </button>
-        </div>
-      ) : (
-        <div className="extensionworkspace">
-          <div className="extensionlist">
-            {visible.map((entry) => (
-              <article
-                key={entry.id}
-                aria-label={entry.name}
-                className={`extensioncard ${detail?.id === entry.id ? "selected" : ""}`}
-              >
-                <div className="extensionheading">
-                  <h2>{entry.name}</h2>
-                  <span
-                    className={`badge ${entry.status === "failed" ? "extensionerror" : ""}`}
-                  >
-                    {labels[entry.status]}
-                  </span>
-                </div>
-                <p>{entry.description}</p>
-                <small>
-                  {entry.required ? "核心能力 · 始终启用" : "可选扩展"} · v
-                  {entry.version}
-                </small>
-                {entry.error ? (
-                  <p className="extensionerror">{entry.error}</p>
-                ) : null}
-                <div className="formactions">
-                  <button
-                    className="quiet"
-                    aria-pressed={detail?.id === entry.id}
-                    onClick={() => setSelected(entry.id)}
-                  >
-                    查看详情
-                  </button>
-                  {entry.required ? (
-                    <span className="hint">由应用管理</span>
-                  ) : (
-                    <button
-                      className="secondary"
-                      disabled={
-                        busy ||
-                        ["starting", "draining", "unavailable"].includes(
-                          entry.status,
-                        )
-                      }
-                      onClick={() => void change(entry)}
-                    >
-                      {entry.status === "failed"
-                        ? "重试启用"
-                        : entry.desiredEnabled
-                          ? "停用"
-                          : "启用"}
-                    </button>
-                  )}
-                </div>
-              </article>
-            ))}
-          </div>
-          {detail ? (
-            <section className="panel extensiondetail" aria-label="扩展详情">
-              <small>扩展详情</small>
-              <h2>{detail.name}</h2>
-              <p>{detail.description}</p>
-              <dl>
-                <dt>发布者</dt>
-                <dd>FlowGate · 官方内置</dd>
-                <dt>版本</dt>
-                <dd>{detail.version}</dd>
-                <dt>当前状态</dt>
-                <dd>{labels[detail.status]}</dd>
-                <dt>启用偏好</dt>
-                <dd>
-                  {detail.desiredEnabled ? "启用" : "停用"} · 已保存到本机
-                </dd>
-              </dl>
-              <h3>访问范围</h3>
-              <ul>
-                {detail.permissions.length ? (
-                  detail.permissions.map((permission) => (
-                    <li key={permission}>
-                      {permissions[permission] ?? permission}
-                    </li>
-                  ))
-                ) : (
-                  <li>只处理传入的数据，不申请系统设置或凭据访问。</li>
-                )}
-              </ul>
-              <h3>依赖</h3>
-              <p>
-                {detail.dependencies.length
-                  ? detail.dependencies
-                      .map(
-                        (id) =>
-                          entries.find((entry) => entry.id === id)?.name ?? id,
-                      )
-                      .join("、")
-                  : "无其他扩展依赖"}
-              </p>
-              {snapshot.network?.plugins.find(
-                (plugin) => plugin.id === detail.id,
-              ) ? (
-                <>
-                  <h3>最近诊断结果</h3>
-                  <p>
-                    {
-                      snapshot.network.plugins.find(
-                        (plugin) => plugin.id === detail.id,
-                      )?.detail
-                    }
-                  </p>
-                </>
-              ) : null}
-              <h3>管理方式</h3>
-              <p>
-                {detail.required
-                  ? "此能力用于代理客户端的基础功能，不能单独停用。"
-                  : "停用会取消并排空此扩展的任务，不会关闭外部应用，也不会停止代理内核。"}
-              </p>
-              <p className="hint">
-                首版仅运行受信的内置扩展，不支持导入第三方代码。访问清单用于审计，不代表不可信代码沙箱。
-              </p>
-              <details>
-                <summary>技术信息与故障追踪</summary>
-                <dl>
-                  <dt>标识</dt>
-                  <dd>{detail.id}</dd>
-                  <dt>运行位置</dt>
-                  <dd>独立扩展宿主</dd>
-                  <dt>版本组合</dt>
-                  <dd>{detail.releaseSet}</dd>
-                  <dt>实例</dt>
-                  <dd>{detail.instance ?? "尚无运行实例"}</dd>
-                  <dt>贡献</dt>
-                  <dd>
-                    {detail.contributions.includes("command")
-                      ? "业务命令"
-                      : "无"}
-                  </dd>
-                </dl>
-                <button
-                  className="secondary"
-                  disabled={busy}
-                  onClick={() =>
-                    void run(async () => {
-                      const all = (await window.shell.request(
-                        "diagnostics.trace",
-                      )) as Event[];
-                      setEvents(
-                        all.filter(
-                          (event) =>
-                            event.name === detail.id ||
-                            event.context.pluginInstance?.startsWith(
-                              detail.id + ":",
-                            ),
-                        ),
-                      );
-                      setEventOwner(detail.id);
-                    })
-                  }
-                >
-                  读取此扩展诊断
-                </button>
-                {eventOwner === detail.id ? (
-                  events.length ? (
-                    <ol className="extensionevents">
-                      {events
-                        .slice(-12)
-                        .reverse()
-                        .map((event, index) => (
-                          <li key={index}>
-                            <span>
-                              {new Date(event.time).toLocaleTimeString()} ·{" "}
-                              {event.status}
-                            </span>
-                            <small>
-                              {event.context.traceId ??
-                                event.context.pluginInstance}
-                            </small>
-                          </li>
-                        ))}
-                    </ol>
-                  ) : (
-                    <p>暂无此扩展的诊断事件。</p>
-                  )
-                ) : null}
-              </details>
-            </section>
+          <p>{summaries[entry.id] ?? entry.description}</p>
+          {unhealthy(entry) || changing ? (
+            <span className="extensionstate" role="status">
+              {changing
+                ? entry.desiredEnabled
+                  ? "正在应用更改…"
+                  : "正在停用…"
+                : labels[entry.status]}
+            </span>
+          ) : null}
+          <TaskError message={feedback[entry.id] || entry.error} />
+          {entry.status === "unavailable" ? (
+            <p>连接恢复后将确认实际状态，已保存的偏好保持不变。</p>
           ) : null}
         </div>
-      )}
+        <div className="extensioncontrols">
+          {entry.required ? (
+            <span className="hint">始终启用</span>
+          ) : (
+            <>
+              {entry.status === "failed" ? (
+                <button
+                  className="quiet"
+                  disabled={locked}
+                  onClick={() => void change(entry, true)}
+                >
+                  重试启用
+                </button>
+              ) : null}
+              <span className="extensionpreference">
+                {entry.desiredEnabled ? "已启用" : "已停用"}
+              </span>
+              <input
+                type="checkbox"
+                role="switch"
+                className="switchinput"
+                aria-label={`启用 ${entry.name}`}
+                checked={entry.desiredEnabled}
+                aria-disabled={locked}
+                aria-busy={changing}
+                onChange={() => {
+                  if (!locked) void change(entry);
+                }}
+              />
+            </>
+          )}
+        </div>
+      </article>
+    );
+  };
+  return (
+    <div className="extensionspage">
+      <PageHeader
+        title="扩展"
+        description="按需开启附加能力，让 FlowGate 更适合你。"
+      >
+        <button
+          className="secondary"
+          aria-expanded={showUpdates}
+          onClick={() => setShowUpdates((value) => !value)}
+        >
+          管理更新
+        </button>
+      </PageHeader>
+      {showUpdates ? (
+        <ReleaseUpdates run={run} busy={busy} extensions={entries} />
+      ) : null}
+      {entries.length >= 10 ? (
+        <div className="tabletools extensionfilters">
+          <SearchField
+            label="搜索扩展"
+            placeholder="搜索名称或功能"
+            value={query}
+            onChange={setQuery}
+          />
+        </div>
+      ) : null}
+      <div className={`extensionworkspace ${detail ? "hasdetail" : ""}`}>
+        <div className="extensioncatalog">
+          {!entries.length ? (
+            <EmptyState
+              icon="extensions"
+              title="暂无扩展目录"
+              description="当前服务未提供扩展目录，请稍后重试。"
+            />
+          ) : !visible.length ? (
+            <EmptyState
+              icon="extensions"
+              title="没有匹配的扩展"
+              description="试试其他关键词。"
+            >
+              <button className="quiet" onClick={() => setQuery("")}>
+                清除筛选
+              </button>
+            </EmptyState>
+          ) : (
+            <>
+              <div className="extensionsectionheading">
+                <h2>可选扩展</h2>
+                <span>{optional.length} 项</span>
+              </div>
+              <p className="extensionsectionhint">
+                停用只会关闭对应诊断，不影响代理连接或外部应用。
+              </p>
+              <div className="extensionlist">{optional.map(row)}</div>
+              <section className="extensioncore">
+                <button
+                  className="extensioncoretoggle"
+                  aria-expanded={showCore || coreError || !!query}
+                  onClick={() => setShowCore((value) => !value)}
+                >
+                  <Icon name="chevron" size={14} />
+                  <span>核心能力</span>
+                  <small>
+                    {core.length} 项 ·{" "}
+                    {coreError ? "需要处理" : "由 FlowGate 自动管理"}
+                  </small>
+                </button>
+                {coreError ? (
+                  <p className="taskerror" role="alert">
+                    部分核心能力不可用，请查看详情或尝试恢复。
+                  </p>
+                ) : null}
+                {showCore || coreError || query ? (
+                  <div className="extensionlist">{core.map(row)}</div>
+                ) : null}
+              </section>
+              <p className="extensionfooter">官方内置 · 随应用版本组合更新</p>
+            </>
+          )}
+        </div>
+        {detail ? (
+          <section
+            key={detail.id}
+            className="panel extensiondetail"
+            aria-label="扩展详情"
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.stopPropagation();
+                closeDetail();
+              }
+            }}
+          >
+            <div className="extensiondetailheader">
+              <button className="quiet extensionclose" onClick={closeDetail}>
+                返回扩展列表
+              </button>
+              <small>扩展详情</small>
+              <h2 ref={detailHeading} tabIndex={-1}>
+                {detail.name}
+              </h2>
+            </div>
+            <p>{detail.description}</p>
+            <dl>
+              <dt>发布者</dt>
+              <dd>FlowGate · 官方内置</dd>
+              <dt>版本</dt>
+              <dd>{detail.version}</dd>
+              <dt>当前状态</dt>
+              <dd>{labels[detail.status]}</dd>
+              <dt>启用偏好</dt>
+              <dd>{detail.desiredEnabled ? "启用" : "停用"} · 已保存到本机</dd>
+            </dl>
+            <h3>访问范围</h3>
+            <ul>
+              {detail.permissions.length ? (
+                detail.permissions.map((permission) => (
+                  <li key={permission}>
+                    {permissions[permission] ?? permission}
+                  </li>
+                ))
+              ) : (
+                <li>只处理传入的数据，不申请系统设置或凭据访问。</li>
+              )}
+            </ul>
+            <h3>依赖</h3>
+            <p>
+              {detail.dependencies.length
+                ? detail.dependencies
+                    .map(
+                      (id) =>
+                        entries.find((entry) => entry.id === id)?.name ?? id,
+                    )
+                    .join("、")
+                : "无其他扩展依赖"}
+            </p>
+            {snapshot.network?.plugins.find(
+              (plugin) => plugin.id === detail.id,
+            ) ? (
+              <>
+                <h3>最近诊断结果</h3>
+                <p>
+                  {
+                    snapshot.network.plugins.find(
+                      (plugin) => plugin.id === detail.id,
+                    )?.detail
+                  }
+                </p>
+              </>
+            ) : null}
+            <h3>管理方式</h3>
+            <p>
+              {detail.required
+                ? "此能力用于代理客户端的基础功能，不能单独停用。"
+                : "停用会取消并排空此扩展的任务，不会关闭外部应用，也不会停止代理内核。"}
+            </p>
+            <Disclosure title="技术信息与故障追踪">
+              <dl>
+                <dt>标识</dt>
+                <dd>{detail.id}</dd>
+                <dt>运行位置</dt>
+                <dd>独立扩展宿主</dd>
+                <dt>版本组合</dt>
+                <dd>{detail.releaseSet}</dd>
+                <dt>实例</dt>
+                <dd>{detail.instance ?? "尚无运行实例"}</dd>
+                <dt>贡献</dt>
+                <dd>
+                  {detail.contributions.includes("command") ? "业务命令" : "无"}
+                </dd>
+              </dl>
+              <button
+                className="secondary"
+                disabled={busy}
+                onClick={() =>
+                  void run(async () => {
+                    const all = (await window.shell.request(
+                      "diagnostics.trace",
+                    )) as Event[];
+                    setEvents(
+                      all.filter(
+                        (event) =>
+                          event.name === detail.id ||
+                          event.context.pluginInstance?.startsWith(
+                            detail.id + ":",
+                          ),
+                      ),
+                    );
+                    setEventOwner(detail.id);
+                  })
+                }
+              >
+                读取此扩展诊断
+              </button>
+              {eventOwner === detail.id ? (
+                events.length ? (
+                  <ol className="extensionevents">
+                    {events
+                      .slice(-12)
+                      .reverse()
+                      .map((event, index) => (
+                        <li key={index}>
+                          <span>
+                            {new Date(event.time).toLocaleTimeString()} ·{" "}
+                            {event.status}
+                          </span>
+                          <small>
+                            {event.context.traceId ??
+                              event.context.pluginInstance}
+                          </small>
+                        </li>
+                      ))}
+                  </ol>
+                ) : (
+                  <p>暂无此扩展的诊断事件。</p>
+                )
+              ) : null}
+            </Disclosure>
+          </section>
+        ) : null}
+      </div>
+
       {unavailable ? (
         <section className="panel">
           <h2>扩展恢复</h2>
@@ -308,7 +432,6 @@ export function Extensions({ snapshot, run, busy }: FeatureProps) {
           </button>
         </section>
       ) : null}
-      <ReleaseUpdates run={run} busy={busy} extensions={entries} />
-    </>
+    </div>
   );
 }

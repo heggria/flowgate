@@ -1,3 +1,4 @@
+import { Disclosure } from "../components";
 import { useState } from "react";
 import { useDraft } from "../drafts";
 import { ReleaseUpdates } from "./ReleaseUpdates";
@@ -7,8 +8,10 @@ export function Settings({
   config,
   save,
   run,
+  busy = false,
 }: {
   config: Configuration;
+  busy?: boolean;
   save: (c: Configuration, options?: { local?: boolean }) => Promise<boolean>;
   run: (fn: () => Promise<unknown>) => Promise<void>;
 }) {
@@ -47,6 +50,7 @@ export function Settings({
             >
               <input
                 type="radio"
+                disabled={busy || task.pending}
                 name="connection-mode"
                 value={mode.id}
                 checked={config.settings.mode === mode.id}
@@ -81,6 +85,7 @@ export function Settings({
               className="switchinput"
               type="checkbox"
               role="switch"
+              disabled={busy || task.pending}
               checked={config.settings.autoConnect}
               onChange={(e) => {
                 void save({
@@ -183,8 +188,7 @@ export function Settings({
             ) : null}
           </form>
         </div>
-        <details className="settingdetails">
-          <summary>系统辅助服务</summary>
+        <Disclosure title="系统辅助服务">
           <SettingRow
             label="安装系统辅助服务"
             description="为系统代理和 TUN 模式提供所需的权限。"
@@ -196,10 +200,10 @@ export function Settings({
               安装系统辅助服务
             </button>
           </SettingRow>
-        </details>
+        </Disclosure>
       </section>
       <div className="settingsupdates">
-        <ReleaseUpdates run={run} />
+        <ReleaseUpdates run={run} busy={busy || task.pending} />
       </div>
     </div>
   );

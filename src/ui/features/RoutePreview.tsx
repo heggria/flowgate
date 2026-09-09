@@ -1,39 +1,58 @@
 import { useDraft } from "../drafts";
 import { useState } from "react";
-import { client } from "../../../packages/client/src/index";
+import { Field, TaskError, useTask } from "../components";
 export function RoutePreview() {
   const draft = useDraft("preview", { target: "" });
-  const target = draft.value.target,
-    setTarget = (target: string) => draft.change({ target });
   const [result, setResult] = useState("");
+  const task = useTask();
   return (
     <section className="resourcesection routepreview">
-      <h2>路径预览</h2>
+      <div className="groupheading">
+        <h2>路径预览</h2>
+        <p>根据当前配置检查目标的匹配出口。</p>
+      </div>
       <form
-        className="inline"
         onSubmit={async (e) => {
           e.preventDefault();
-          try {
-            const r = await client.request<{ outbound: string }>(
+          setResult("");
+          await task.execute(async () => {
+            const r = await task.request<{ outbound: string }>(
               "policy.explain",
-              { target },
+              { target: draft.value.target },
             );
             setResult("配置匹配出口：" + r.outbound + "。尚未发起实际请求。");
-          } catch (e) {
-            setResult(String(e));
-          }
+          });
         }}
       >
-        <input
-          aria-label="目标域名"
-          placeholder="输入域名，例如 example.com"
-          value={target}
-          onChange={(e) => setTarget(e.target.value)}
-          required
-        />
-        <button className="secondary">检查路径</button>
+        <Field id="preview-target" label="目标域名">
+          <div className="inline">
+            <input
+              id="preview-target"
+              placeholder="输入域名，例如 example.com"
+              value={draft.value.target}
+              onChange={(e) => {
+                draft.change({ target: e.target.value });
+                setResult("");
+                task.setError("");
+              }}
+              required
+              disabled={task.pending}
+            />
+            <button
+              className="secondary"
+              disabled={task.pending || !draft.ready}
+            >
+              {task.pending ? "检查中…" : "检查路径"}
+            </button>
+          </div>
+        </Field>
+        <TaskError message={task.error || draft.error} />
+        {result ? (
+          <p className="inlinestatus" role="status">
+            {result}
+          </p>
+        ) : null}
       </form>
-      {result ? <p role="status">{result}</p> : null}
     </section>
   );
 }

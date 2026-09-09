@@ -204,6 +204,8 @@ function App({ routes }: { routes: RouteContribution[] }) {
             .map((r) => (
               <button
                 key={r.id}
+                aria-label={r.label}
+                title={r.label}
                 aria-current={page === r.id ? "page" : undefined}
                 className={`nav ${page === r.id ? "active" : ""} ${r.id === "settings" ? "settingsnav" : ""}`}
                 onClick={() => {
@@ -289,7 +291,7 @@ function App({ routes }: { routes: RouteContribution[] }) {
           </div>
         </header>
         {error ? (
-          <div role="alert" className="alert">
+          <div role="alert" className="alert alert-error">
             {error}
             <button aria-label="关闭错误" onClick={() => setError("")}>
               <Icon name="close" size={14} />
