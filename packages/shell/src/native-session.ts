@@ -2,14 +2,20 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
 import type { KernelState, NativePort } from "../../contracts/src/index";
+import { PausableTimers, type TimerTicket } from "./pausable-timers";
 export class NativeSession implements NativePort {
+  private readonly timers = new PausableTimers();
+  setSuspended(suspended: boolean) {
+    if (suspended) this.timers.pause();
+    else this.timers.resume();
+  }
   private process?: ChildProcessWithoutNullStreams;
   private pending = new Map<
     string,
     {
       resolve: (v: any) => void;
       reject: (e: Error) => void;
-      timer: NodeJS.Timeout;
+      timer: TimerTicket;
     }
   >();
   private state: KernelState = {
@@ -36,7 +42,7 @@ export class NativeSession implements NativePort {
       }
       const p = this.pending.get(data.id);
       if (!p) return;
-      clearTimeout(p.timer);
+      p.timer.cancel();
       this.pending.delete(data.id);
       if (data.error) p.reject(new Error(data.error));
       else {
@@ -55,7 +61,7 @@ export class NativeSession implements NativePort {
         message: "原生桥接失联；禁止新写入",
       };
       for (const p of this.pending.values()) {
-        clearTimeout(p.timer);
+        p.timer.cancel();
         p.reject(
           Object.assign(new Error("原生操作结果未知"), { outcome: "unknown" }),
         );
@@ -75,7 +81,7 @@ export class NativeSession implements NativePort {
     if (!this.process) return Promise.reject(new Error("原生桥接不可用"));
     return new Promise((resolve, reject) => {
       const id = randomUUID();
-      const timer = setTimeout(() => {
+      const timer = this.timers.timeout(() => {
         this.pending.delete(id);
         reject(
           Object.assign(new Error("原生操作超时，结果未知"), {

@@ -70,6 +70,9 @@ export class StateStore {
     this.accepting = false;
     await this.queue;
   }
+  pause() {
+    this.accepting = false;
+  }
   resume() {
     if (!this.lock) throw new Error("No writer lease");
     this.accepting = true;

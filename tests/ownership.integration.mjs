@@ -13,10 +13,16 @@ execFileSync(
   { stdio: "inherit" },
 );
 execFileSync(join(work, "test"), [join(work, "data")], { stdio: "inherit" });
-execFileSync("/usr/bin/swiftc", [
-  "native/SessionLease.swift", "tests/SessionLeaseTests.swift",
-  "-o", join(work, "session-test"),
-], { stdio: "inherit" });
+execFileSync(
+  "/usr/bin/swiftc",
+  [
+    "native/SessionLease.swift",
+    "tests/SessionLeaseTests.swift",
+    "-o",
+    join(work, "session-test"),
+  ],
+  { stdio: "inherit" },
+);
 execFileSync(join(work, "session-test"), [], { stdio: "inherit" });
 await writeFile(
   "work/ownership-result.json",

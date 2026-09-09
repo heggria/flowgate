@@ -112,7 +112,13 @@ port.on("message", async ({ data }: any) => {
     if (data.epoch !== epoch || data.session !== session) return;
     await ready;
     let result;
-    if (data.method === "drain") {
+    if (data.method === "power.suspend") {
+      core.suspend();
+      result = { suspended: true };
+    } else if (data.method === "power.resume") {
+      await core.resume();
+      result = { resumed: true };
+    } else if (data.method === "drain") {
       await core.drain();
       result = { drained: true };
     } else if (data.method === "stop") {

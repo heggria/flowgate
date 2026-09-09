@@ -25,6 +25,7 @@ for (const variant of process.env.FLOWGATE_UPDATE_VARIANTS?.split(",") ?? [
   "delayed-extension",
   "delayed-gateway",
   "delayed-renderer",
+  "unresponsive-service",
 ]) {
   const work = await mkdtemp(resolve("work/update-" + variant + "-"));
   const fixture = join(work, "app");
@@ -53,9 +54,11 @@ for (const variant of process.env.FLOWGATE_UPDATE_VARIANTS?.split(",") ?? [
         Buffer.from(
           variant === "rollback"
             ? "if(process.env.FLOWGATE_PREFLIGHT!=='1')throw new Error('Injected startup failure');\n"
-            : variant.startsWith("delayed-") && variant !== "delayed-renderer"
-              ? "if(process.env.FLOWGATE_PREFLIGHT!=='1')setTimeout(()=>process.exit(17),4000);\n"
-              : "// independent update fixture\n",
+            : variant === "unresponsive-service"
+              ? "if(process.env.FLOWGATE_PREFLIGHT!=='1')setTimeout(()=>{while(true){}},4000);\n"
+              : variant.startsWith("delayed-") && variant !== "delayed-renderer"
+                ? "if(process.env.FLOWGATE_PREFLIGHT!=='1')setTimeout(()=>process.exit(17),4000);\n"
+                : "// independent update fixture\n",
         ),
         bytes,
       ]);
@@ -257,14 +260,14 @@ for (const variant of process.env.FLOWGATE_UPDATE_VARIANTS?.split(",") ?? [
       JSON.stringify({ variant, gatewayBefore, gatewayAfter }),
     );
     if (variant === "ui") assert.equal(gatewayAfter.port, gatewayBefore.port);
-    if (variant.startsWith("delayed-")) {
+    if (variant.startsWith("delayed-") || variant === "unresponsive-service") {
       assert.equal(
         (await page.evaluate(() => window.shell.request("release.status")))
           .current,
         id,
         "candidate must activate successfully before the injected runtime failure",
       );
-      const deadline = Date.now() + 30000;
+      const deadline = Date.now() + 50000;
       let reverted = false,
         rendererCrashes = 0,
         nextCrash = Date.now();

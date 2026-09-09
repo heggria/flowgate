@@ -529,7 +529,7 @@ export class ServiceCore {
     } catch (error) {
       this.store.resume();
       this.lifecycle = "ready";
-      this.networkObserver.start();
+      this.networkObserver.resume();
       throw error;
     }
     await writeHandoff(this.store.directory, {
@@ -553,5 +553,19 @@ export class ServiceCore {
     this.telemetry?.close();
     await this.store.close();
     this.lifecycle = "stopped";
+  }
+  suspend() {
+    this.store.pause();
+    this.lifecycle = "draining";
+    this.networkObserver.stop();
+    for (const controller of this.measuring.values()) controller.abort();
+  }
+  async resume() {
+    await this.store.drain();
+    await this.reconcileNative();
+    this.networkObserver.resume();
+    await this.networkObserver.refresh().catch(() => {});
+    this.store.resume();
+    this.lifecycle = "ready";
   }
 }

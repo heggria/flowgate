@@ -59,6 +59,7 @@ async function startGateway(directory: string, manifest?: ReleaseSet) {
   }
 }
 let updating = false,
+  suspended = false,
   quitting = false,
   recoveryMessage = "业务服务尚未启动";
 let currentDirectory = join(__dirname, "release"),
@@ -67,7 +68,7 @@ let faultQueue = Promise.resolve();
 function hostFault(host: ProcessSupervisor, isCurrent: () => boolean) {
   faultQueue = faultQueue
     .then(async () => {
-      if (!isCurrent() || updating || quitting) return;
+      if (!isCurrent() || updating || quitting || suspended) return;
       try {
         if (
           currentManifest &&
@@ -440,7 +441,7 @@ else {
         if (
           shell.recovering ||
           !service ||
-          (updating && input?.method !== "snapshot")
+          ((updating || suspended) && input?.method !== "snapshot")
         )
           throw new Error("服务正在恢复或切换");
         if (
@@ -579,6 +580,7 @@ else {
           return {
             ...releases.state,
             updating,
+            suspended,
             events: updateTrace.snapshot(),
             release: currentManifest?.id ?? "bundled",
             configured: !!updateConfig,
@@ -600,6 +602,7 @@ else {
         if (input.method === "release.check")
           return releases.check(input.payload?.channel);
         if (input.method === "release.activate") {
+          if (suspended) throw new Error("系统正在恢复网络状态，请稍后更新");
           drafts.assertReloadable();
           if (typeof input.payload?.id !== "string")
             throw new Error("缺少版本标识");
@@ -634,8 +637,59 @@ else {
       } catch (error) {
         recover(error);
       }
+      let powerWork = Promise.resolve();
+      let powerGeneration = 0;
+      const pauseDeadlines = (value: boolean) => {
+        native.setSuspended(value);
+        for (const host of [service, extension, gateway])
+          host?.setSuspended(value);
+      };
+      powerMonitor.on("suspend", () => {
+        powerGeneration++;
+        suspended = true;
+        pauseDeadlines(true);
+        powerWork = powerWork
+          .then(async () => {
+            await service?.call("power.suspend");
+          })
+          .catch(() => {
+            /* Resume rechecks every host and the native state. */
+          });
+      });
       powerMonitor.on("resume", () => {
-        void publish().catch(recover);
+        const generation = ++powerGeneration;
+        pauseDeadlines(false);
+        powerWork = powerWork
+          .then(async () => {
+            while (updating && !quitting)
+              await new Promise((resolve) => setTimeout(resolve, 50));
+            if (quitting || generation !== powerGeneration) return;
+            await native.status();
+            for (const host of [extension, service, gateway]) {
+              if (!host) continue;
+              try {
+                await host.call(
+                  "health",
+                  undefined,
+                  undefined,
+                  undefined,
+                  5000,
+                );
+              } catch {
+                if (!host.canRestart())
+                  throw new Error("唤醒后宿主恢复次数已耗尽");
+                await host.stop(false);
+                if (host === service)
+                  await clearDeadWriter(join(data, "business/writer.lock"));
+                await host.start();
+              }
+            }
+            await service?.call("power.resume");
+            if (generation !== powerGeneration) return;
+            suspended = false;
+            await publish();
+          })
+          .catch(recover);
       });
     })
     .catch((error) => {
@@ -646,6 +700,8 @@ else {
     if (quitting) return;
     event.preventDefault();
     quitting = true;
+    native?.setSuspended(false);
+    for (const host of [service, extension, gateway]) host?.setSuspended(false);
     if (shell) shell.quitting = true;
     void (async () => {
       try {
