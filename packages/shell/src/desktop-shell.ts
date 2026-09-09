@@ -1,7 +1,12 @@
+import { beforeDeadline } from "../../runtime/src/deadline";
+import { BUILD_VERSION } from "../../contracts/src/version";
 import { BrowserWindow, Tray, Menu, nativeImage } from "electron";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+let nextRendererEpoch = Date.now();
 export class DesktopShell {
+  uiIdentity = { releaseSet: "bundled", hostVersion: BUILD_VERSION };
+  uiEpoch = ++nextRendererEpoch;
   private readyResolve?: () => void;
   markReady() {
     this.readyResolve?.();
@@ -51,6 +56,7 @@ export class DesktopShell {
       },
     });
     this.window = window;
+    this.uiEpoch = ++nextRendererEpoch;
     window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
     window.webContents.on("will-navigate", (e) => e.preventDefault());
     window.webContents.session.setPermissionRequestHandler((_w, _p, cb) =>
@@ -108,7 +114,25 @@ export class DesktopShell {
     this.uiPath = join(this.bundle, "recovery.html");
     this.open();
   }
-  async reload(path: string) {
+  async prepareRelease() {
+    if (
+      this.window &&
+      !this.window.isDestroyed() &&
+      !this.window.webContents.isCrashed() &&
+      !this.recovering
+    )
+      await beforeDeadline(
+        this.window.webContents.executeJavaScript(
+          "window.shell?.prepareRelease?.()",
+        ),
+        Date.now() + 5000,
+        "界面模块",
+      );
+  }
+  async reload(path: string, identity = this.uiIdentity) {
+    await this.prepareRelease();
+    this.uiIdentity = identity;
+    this.uiEpoch = ++nextRendererEpoch;
     if (path !== this.uiPath) this.rendererFailures = 0;
     this.uiPath = path;
     this.recovering = false;

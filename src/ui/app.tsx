@@ -16,7 +16,10 @@ import {
   pendingCount,
   subscribePending,
 } from "../../packages/client/src/index";
-import { ModuleRuntime } from "../../packages/runtime/src/lifecycle";
+import {
+  ModuleRuntime,
+  TraceBuffer,
+} from "../../packages/runtime/src/lifecycle";
 import {
   modules,
   type CommandContribution,
@@ -79,6 +82,7 @@ function App({ routes }: { routes: RouteContribution[] }) {
     let mounted = true;
     const update = (s: AppSnapshot) => {
       if (mounted) {
+        latestSnapshot = s;
         setSnapshot(s);
         void window.shell.request("ui.ready");
       }
@@ -356,15 +360,43 @@ function App({ routes }: { routes: RouteContribution[] }) {
     </div>
   );
 }
-const runtime = new ModuleRuntime();
-void runtime
-  .activate(modules)
-  .then(() =>
-    createRoot(document.getElementById("root")!).render(
-      <App
-        routes={runtime.entries
-          .filter((e) => e.kind === "route")
-          .map((e) => e.value as RouteContribution)}
-      />,
-    ),
+let latestSnapshot: AppSnapshot;
+let rendererContext: import("../../packages/contracts/src/index").TraceContext;
+const runtime = new ModuleRuntime(new TraceBuffer(), () => ({
+  ...rendererContext,
+  configRevision: latestSnapshot?.configuration.revision,
+  serviceVersion: latestSnapshot?.serviceVersion,
+  serviceEpoch: latestSnapshot?.epoch,
+}));
+let traceFlush = Promise.resolve();
+runtime.trace.onChange = () => {
+  const event = runtime.trace.snapshot().at(-1)!;
+  traceFlush = traceFlush
+    .catch(() => {})
+    .then(async () => {
+      await window.shell.request("ui.trace", event);
+    });
+};
+void (async () => {
+  [latestSnapshot, rendererContext] = await Promise.all([
+    client.request<AppSnapshot>("snapshot"),
+    window.shell.request("ui.context") as Promise<
+      import("../../packages/contracts/src/index").TraceContext
+    >,
+  ]);
+  await runtime.activate(modules);
+  window.shell.setReleaseHandler?.(async () => {
+    await runtime.stop();
+    await traceFlush;
+  });
+  createRoot(document.getElementById("root")!).render(
+    <App
+      routes={runtime.entries
+        .filter((e) => e.kind === "route")
+        .map((e) => e.value as RouteContribution)}
+    />,
   );
+})().catch(() => {
+  document.getElementById("root")!.textContent =
+    "工作区启动失败，请重新打开应用或使用恢复页面。";
+});

@@ -62,6 +62,7 @@ async function startGateway(directory: string, manifest?: ReleaseSet) {
       throw new Error("Credential scope denied");
     return vault.resolve(payload.reference, new Set(["provider.mock"]));
   };
+  host.setSuspended(suspended);
   gateway = host;
   host.onFault = () => hostFault(host, () => gateway === host);
   try {
@@ -79,6 +80,12 @@ let updating = false,
 let currentDirectory = join(__dirname, "release"),
   currentManifest: ReleaseSet | undefined;
 let faultQueue = Promise.resolve();
+function rendererIdentity(manifest?: ReleaseSet) {
+  return {
+    releaseSet: manifest?.id ?? "bundled",
+    hostVersion: manifest?.components?.ui ?? app.getVersion(),
+  };
+}
 function hostFault(host: ProcessSupervisor, isCurrent: () => boolean) {
   faultQueue = faultQueue
     .then(async () => {
@@ -121,6 +128,7 @@ async function rollbackRuntime(id: string) {
     await startHosts(currentDirectory, currentManifest);
     await shell.reload(
       join(currentDirectory, currentManifest?.ui ?? "index.html"),
+      rendererIdentity(currentManifest),
     );
     await publish();
   } finally {
@@ -168,6 +176,7 @@ async function publish() {
   if (service) shell.publish(await service.call("snapshot"));
 }
 function attachCapabilities(host: ProcessSupervisor, readonly = false) {
+  host.setSuspended(suspended);
   host.onCapability = async (method, payload: any, signal) => {
     if (method === "native.status") return native.status();
     if (method === "native.control") return native.control();
@@ -224,6 +233,7 @@ async function startHosts(directory: string, manifest?: ReleaseSet) {
         manifest?.catalogVersion === 1 ? JSON.stringify(manifest.builtins) : "",
     },
   );
+  extension.setSuspended(suspended);
   await extension.start();
   service = new ProcessSupervisor(
     "Service",
@@ -389,6 +399,7 @@ else {
           restoreUI: async () => {
             await shell.reload(
               join(currentDirectory, currentManifest?.ui ?? "index.html"),
+              rendererIdentity(currentManifest),
             );
           },
           preflight: async (directory, manifest) => {
@@ -436,10 +447,14 @@ else {
             currentManifest = rollbackManifest;
             await shell.reload(
               join(currentDirectory, currentManifest?.ui ?? "index.html"),
+              rendererIdentity(currentManifest),
             );
           },
           reloadUI: async (directory, manifest) => {
-            await shell.reload(join(directory, manifest.ui));
+            await shell.reload(
+              join(directory, manifest.ui),
+              rendererIdentity(manifest),
+            );
             currentDirectory = directory;
             currentManifest = manifest;
           },
@@ -520,6 +535,63 @@ else {
       });
       ipcMain.handle("shell:request", async (event, input) => {
         shell.authorize(event);
+        if (input?.method === "ui.context")
+          return {
+            ...shell.uiIdentity,
+            epoch: shell.uiEpoch,
+            shellVersion: app.getVersion(),
+            serviceVersion:
+              service?.environment.FLOWGATE_HOST_VERSION ?? app.getVersion(),
+            serviceEpoch: service?.epoch,
+            configRevision: 0,
+            operationId: "renderer-" + shell.uiEpoch,
+            traceId: randomUUID().replaceAll("-", ""),
+            protocolVersion: 1,
+            schemaVersion: 1,
+          };
+        if (input?.method === "ui.trace") {
+          const entry = input.payload;
+          if (
+            !entry ||
+            JSON.stringify(entry).length > 8192 ||
+            !/^[\w.-]{1,120}$/.test(entry.name) ||
+            ![
+              "starting",
+              "ready",
+              "draining",
+              "stopped",
+              "failed",
+              "release-failed",
+              "timeout",
+            ].includes(entry.status) ||
+            typeof entry.context?.pluginInstance !== "string" ||
+            entry.context.pluginInstance.length > 200 ||
+            !Number.isSafeInteger(entry.context.configRevision) ||
+            entry.context.configRevision < 0
+          )
+            throw new Error("界面生命周期事件无效");
+          ProcessSupervisor.trace.emit("Renderer:" + entry.name, entry.status, {
+            operationId: "renderer-" + shell.uiEpoch,
+            traceId:
+              typeof entry.context.traceId === "string"
+                ? entry.context.traceId.slice(0, 80)
+                : "",
+            ...shell.uiIdentity,
+            epoch: shell.uiEpoch,
+            shellVersion: app.getVersion(),
+            serviceVersion:
+              service?.environment.FLOWGATE_HOST_VERSION ?? app.getVersion(),
+            serviceEpoch: service?.epoch,
+            configRevision: entry.context.configRevision,
+            pluginInstance: entry.context.pluginInstance,
+            moduleVersions: {
+              [entry.name]: String(
+                entry.context.moduleVersions?.[entry.name] ?? "unknown",
+              ).slice(0, 80),
+            },
+          });
+          return true;
+        }
         if (input?.method === "ui.ready") {
           shell.markReady();
           if (pendingNavigation) {
@@ -560,7 +632,10 @@ else {
             currentDirectory = join(__dirname, "release");
             currentManifest = undefined;
             await startHosts(currentDirectory);
-            await shell.reload(join(currentDirectory, "index.html"));
+            await shell.reload(
+              join(currentDirectory, "index.html"),
+              rendererIdentity(currentManifest),
+            );
           } finally {
             updating = false;
           }
@@ -673,6 +748,7 @@ else {
           currentDirectory = verified.directory;
           currentManifest = verified.manifest;
           shell.uiPath = join(currentDirectory, currentManifest.ui);
+          shell.uiIdentity = rendererIdentity(currentManifest);
         }
         await startHosts(currentDirectory, currentManifest);
         shell.open();
@@ -748,6 +824,12 @@ else {
     void (async () => {
       try {
         await cleanupStages([
+          {
+            name: "renderer",
+            run: async () => {
+              await shell?.prepareRelease();
+            },
+          },
           { name: "hosts", run: stopHosts },
           {
             name: "native",

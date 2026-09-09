@@ -94,3 +94,35 @@ test("restart reconciles an interrupted disconnect by matching terminal operatio
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("failed handoff persistence restores Service and adapter admission without switching writers", async () => {
+  const { mkdir } = await import("node:fs/promises");
+  const dir = await mkdtemp(join(tmpdir(), "flowgate-handoff-failure-"));
+  let writes = 0;
+  const core = new ServiceCore(
+    new StateStore(dir, 1),
+    {
+      status: async () => ({ status: "stopped", systemControl: false }),
+      apply: async () => {
+        writes++;
+        return { status: "running", systemControl: false };
+      },
+      stop: async () => ({ status: "stopped", systemControl: false }),
+    },
+    async () => {},
+    "test",
+  );
+  try {
+    await core.start();
+    await mkdir(join(dir, "handoff.json.tmp"));
+    await assert.rejects(core.drain(), { code: "EISDIR" });
+    assert.equal(core.lifecycle, "ready");
+    await assert.rejects(new StateStore(dir, 2).start());
+    await core.request("proxy.connect", {}, "after-handoff-failure");
+    assert.equal(writes, 1);
+  } finally {
+    await rm(join(dir, "handoff.json.tmp"), { recursive: true, force: true });
+    await core.stop();
+    await rm(dir, { recursive: true, force: true });
+  }
+});

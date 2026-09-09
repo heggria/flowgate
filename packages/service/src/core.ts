@@ -766,6 +766,22 @@ export class ServiceCore {
         throw Object.assign(new Error("原生操作结果尚未明确，已延后更新"), {
           outcome: "unknown",
         });
+      await this.native.drain(Date.now() + 5000);
+      await writeHandoff(this.store.directory, {
+        version: 1,
+        protocol: 1,
+        schema: 1,
+        releaseSet: this.releaseSet,
+        epoch: this.store.epoch,
+        revision: this.store.configuration.revision,
+        pendingOperationIds: this.store.operations
+          .filter(
+            (operation) =>
+              operation.state === "pending" || operation.state === "unknown",
+          )
+          .map((operation) => operation.id),
+        at: new Date().toISOString(),
+      });
     } catch (error) {
       this.store.resume();
       this.native.resume();
@@ -773,22 +789,6 @@ export class ServiceCore {
       this.networkObserver.resume();
       throw error;
     }
-    await this.native.drain(Date.now() + 5000);
-    await writeHandoff(this.store.directory, {
-      version: 1,
-      protocol: 1,
-      schema: 1,
-      releaseSet: this.releaseSet,
-      epoch: this.store.epoch,
-      revision: this.store.configuration.revision,
-      pendingOperationIds: this.store.operations
-        .filter(
-          (operation) =>
-            operation.state === "pending" || operation.state === "unknown",
-        )
-        .map((operation) => operation.id),
-      at: new Date().toISOString(),
-    });
   }
   async stop() {
     await this.drain();

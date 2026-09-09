@@ -344,6 +344,35 @@ for (const variant of process.env.FLOWGATE_UPDATE_VARIANTS?.split(",") ?? [
       JSON.stringify({ variant, gatewayBefore, gatewayAfter }),
     );
     if (variant === "ui") assert.equal(gatewayAfter.port, gatewayBefore.port);
+    if (variant === "ui" || variant === "service") {
+      const trace = await page.evaluate(() =>
+        window.shell.request("diagnostics.trace"),
+      );
+      const stoppedUI = trace.find(
+        (e) =>
+          e.name === "Renderer:overview" &&
+          e.status === "stopped" &&
+          e.context.releaseSet === "bundled",
+      );
+      const readyUI = trace.find(
+        (e) =>
+          e.name === "Renderer:overview" &&
+          e.status === "ready" &&
+          e.context.releaseSet === id,
+      );
+      assert.ok(stoppedUI, "old UI module records release before navigation");
+      assert.ok(
+        readyUI,
+        "new UI records its own Release Set even when the old Service stays running",
+      );
+      assert.notEqual(
+        stoppedUI.context.pluginInstance,
+        readyUI.context.pluginInstance,
+      );
+      assert.notEqual(stoppedUI.context.epoch, readyUI.context.epoch);
+      assert.ok(Number.isSafeInteger(readyUI.context.configRevision));
+      assert.ok(readyUI.context.moduleVersions.overview);
+    }
     if (variant.startsWith("delayed-") || variant === "unresponsive-service") {
       assert.equal(
         (await page.evaluate(() => window.shell.request("release.status")))

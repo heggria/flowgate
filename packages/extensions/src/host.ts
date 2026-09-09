@@ -154,6 +154,8 @@ const ready = runtime.configure({}, true);
 ready.catch(() => {});
 const requests = new RequestScope();
 port.on("message", async ({ data }: any) => {
+  if (data?.type === "power") return; // This host owns no capability-response deadline.
+
   if (data?.type === "cancel") {
     if (data.protocol === 1 && data.session === session && data.epoch === epoch)
       requests.cancel(data.id);

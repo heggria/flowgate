@@ -11,7 +11,17 @@ contextBridge.exposeInMainWorld("flowgate", {
     return () => ipcRenderer.removeListener("client:snapshot", handler);
   },
 });
+let releaseHandler: (() => Promise<void>) | undefined;
 contextBridge.exposeInMainWorld("shell", {
+  setReleaseHandler: (handler: () => Promise<void>) => {
+    releaseHandler = handler;
+    return () => {
+      if (releaseHandler === handler) releaseHandler = undefined;
+    };
+  },
+  prepareRelease: async () => {
+    await releaseHandler?.();
+  },
   onNavigate: (listener: (route: string) => void) => {
     const handler = (_event: unknown, route: string) => listener(route);
     ipcRenderer.on("shell:navigate", handler);

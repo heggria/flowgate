@@ -1,3 +1,7 @@
+import {
+  PausableTimers,
+  type TimerTicket,
+} from "../../runtime/src/pausable-timers";
 import { randomUUID, createHash } from "node:crypto";
 import { MockGateway, manifest } from "./gateway";
 import { CapabilityHost } from "../../runtime/src/capabilities";
@@ -7,18 +11,19 @@ const epoch = Number(process.env.FLOWGATE_EPOCH),
   session = process.env.FLOWGATE_SESSION;
 const token = process.env.FLOWGATE_MODEL_TOKEN;
 if (!token) throw new Error("Missing model token");
+const capabilityTimers = new PausableTimers();
 const pending = new Map<
   string,
   {
     resolve: (value: any) => void;
     reject: (error: Error) => void;
-    timer: NodeJS.Timeout;
+    timer: TimerTicket;
   }
 >();
 function hostRequest(method: string, payload: unknown): Promise<any> {
   return new Promise((resolve, reject) => {
     const id = randomUUID();
-    const timer = setTimeout(() => {
+    const timer = capabilityTimers.timeout(() => {
       pending.delete(id);
       reject(new Error("Host capability timeout"));
     }, 5000);
@@ -54,10 +59,21 @@ const gateway = new MockGateway(
 const ready = host.service("gateway", gateway);
 ready.catch(() => {});
 port.on("message", async ({ data }: any) => {
+  if (data?.type === "power") {
+    if (
+      data.protocol === 1 &&
+      data.epoch === epoch &&
+      data.session === session
+    ) {
+      if (data.suspended === true) capabilityTimers.pause();
+      else if (data.suspended === false) capabilityTimers.resume();
+    }
+    return;
+  }
   if (data?.type === "capability.result") {
     const request = pending.get(data.id);
     if (!request) return;
-    clearTimeout(request.timer);
+    request.timer.cancel();
     pending.delete(data.id);
     if (data.error)
       request.reject(

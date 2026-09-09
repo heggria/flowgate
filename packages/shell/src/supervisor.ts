@@ -19,12 +19,26 @@ export class ProcessSupervisor {
   private heartbeatRequest?: AbortController;
   setSuspended(suspended: boolean) {
     this.suspended = suspended;
+    this.notifyPower();
     if (suspended) {
       this.timers.pause();
       this.stopHeartbeat();
     } else {
       this.timers.resume();
       if (this.child) this.watchHealth(this.child);
+    }
+  }
+  private notifyPower() {
+    try {
+      this.child?.postMessage({
+        type: "power",
+        protocol: 1,
+        epoch: this.epoch,
+        session: this.session,
+        suspended: this.suspended,
+      });
+    } catch {
+      /* A concurrently exiting host is reconciled by its exit handler. */
     }
   }
   private stopHeartbeat() {
@@ -107,6 +121,7 @@ export class ProcessSupervisor {
       },
     });
     this.child = child;
+    this.notifyPower();
     child.on("message", async (data: any) => {
       if (data.epoch !== this.epoch) return;
       if (data.type === "trace" && data.session === this.session) {

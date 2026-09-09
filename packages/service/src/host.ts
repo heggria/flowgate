@@ -1,3 +1,7 @@
+import {
+  PausableTimers,
+  type TimerTicket,
+} from "../../runtime/src/pausable-timers";
 import serviceCatalog from "../../contracts/src/service-catalog.json";
 import { requestTrace } from "../../runtime/src/trace-context";
 import { RequestScope } from "../../runtime/src/request-scope";
@@ -9,12 +13,13 @@ import { assertRequest, type KernelState } from "../../contracts/src/index";
 const port = (process as any).parentPort;
 const epoch = Number(process.env.FLOWGATE_EPOCH),
   session = process.env.FLOWGATE_SESSION!;
+const capabilityTimers = new PausableTimers();
 const pending = new Map<
   string,
   {
     resolve: (v: any) => void;
     reject: (e: Error) => void;
-    timer: NodeJS.Timeout;
+    timer: TimerTicket;
     cleanup: () => void;
   }
 >();
@@ -26,7 +31,7 @@ function capability(
   if (signal?.aborted) return Promise.reject(new Error("请求已取消"));
   return new Promise((resolve, reject) => {
     const id = randomUUID();
-    const timer = setTimeout(() => {
+    const timer = capabilityTimers.timeout(() => {
       pending.delete(id);
       cleanup();
       reject(
@@ -38,7 +43,7 @@ function capability(
     const abort = () => {
       if (!pending.has(id)) return;
       pending.delete(id);
-      clearTimeout(timer);
+      timer.cancel();
       cleanup();
       port.postMessage({
         type: "capability.cancel",
@@ -110,6 +115,17 @@ const ready =
 ready.catch(() => {});
 const requests = new RequestScope();
 port.on("message", async ({ data }: any) => {
+  if (data?.type === "power") {
+    if (
+      data.protocol === 1 &&
+      data.epoch === epoch &&
+      data.session === session
+    ) {
+      if (data.suspended === true) capabilityTimers.pause();
+      else if (data.suspended === false) capabilityTimers.resume();
+    }
+    return;
+  }
   if (data?.type === "cancel") {
     if (data.protocol === 1 && data.session === session && data.epoch === epoch)
       requests.cancel(data.id);
@@ -118,7 +134,7 @@ port.on("message", async ({ data }: any) => {
   if (data?.type === "capability.result") {
     const p = pending.get(data.id);
     if (!p) return;
-    clearTimeout(p.timer);
+    p.timer.cancel();
     p.cleanup();
     pending.delete(data.id);
     if (data.error)
