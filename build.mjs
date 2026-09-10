@@ -79,6 +79,7 @@ await withBuildOutput(async (output) => {
     const shared = [
       "native/HelperProtocol.swift",
       "native/Signing.swift",
+      "native/LocalTrust.swift",
       "native/ProcessIdentity.swift",
       "native/KernelWatchdog.swift",
       "native/OwnershipJournal.swift",
@@ -98,6 +99,13 @@ await withBuildOutput(async (output) => {
       output + "/flowgate-helper",
     ]);
   }
+  execFileSync("/usr/bin/swiftc", [
+    "native/LocalTrust.swift",
+    "native/OwnershipJournal.swift",
+    "native/LocalInstaller.swift",
+    "-o",
+    output + "/flowgate-local-installer",
+  ]);
   await copyFile("vendor/sing-box", output + "/sing-box");
 
   await copyFile(

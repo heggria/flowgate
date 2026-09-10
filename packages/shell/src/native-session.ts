@@ -27,10 +27,15 @@ export class NativeSession implements NativePort {
     readonly bridge: string,
     readonly kernel: string,
     readonly directory: string,
+    readonly allowSystemHelper = false,
   ) {}
   async start() {
     const child = spawn(this.bridge, [this.kernel, this.directory], {
       stdio: "pipe",
+      env: {
+        ...process.env,
+        FLOWGATE_DISABLE_SYSTEM_HELPER: this.allowSystemHelper ? "0" : "1",
+      },
     });
     this.process = child;
     createInterface({ input: child.stdout }).on("line", (line) => {
@@ -117,6 +122,12 @@ export class NativeSession implements NativePort {
     mode = "manual",
   ) {
     return this.call("apply", { config, revision, operationId, mode });
+  }
+  helperInfo() {
+    return this.call("helper.info");
+  }
+  resetHelper() {
+    return this.call("helper.reset");
   }
   installHelper() {
     return this.call("helper.install");

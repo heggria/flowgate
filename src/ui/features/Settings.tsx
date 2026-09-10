@@ -36,6 +36,40 @@ export function Settings({
   const { dns, port } = draft.value,
     task = useTask(),
     [notice, setNotice] = useState("");
+  const [helper, setHelper] = useState<{
+    installed: boolean;
+    compatible: boolean;
+    message: string;
+  }>();
+  const [helperBusy, setHelperBusy] = useState(false);
+  useEffect(() => {
+    let active = true;
+    window.shell
+      .request("helper.info")
+      .then((value) => {
+        if (active) setHelper(value as typeof helper);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
+  async function helperAction(method: "helper.install" | "helper.uninstall") {
+    setHelperBusy(true);
+    try {
+      await run(async () => {
+        try {
+          await window.shell.request(method);
+        } finally {
+          setHelper(
+            (await window.shell.request("helper.info")) as typeof helper,
+          );
+        }
+      });
+    } finally {
+      setHelperBusy(false);
+    }
+  }
   const dirty =
     dns !== config.settings.dnsServer ||
     port !== String(config.settings.listenPort);
@@ -88,16 +122,32 @@ export function Settings({
             </label>
           ))}
         </div>
-        {!systemControl ? (
-          <div className="sectionactions">
+        <div className="sectionactions">
+          <Button
+            className="quiet"
+            disabled={busy || helperBusy}
+            onClick={() => void helperAction("helper.install")}
+          >
+            {helperBusy
+              ? "处理中…"
+              : helper?.installed
+                ? "更新辅助服务"
+                : "安装系统辅助服务"}
+          </Button>
+          {helper?.installed && (
             <Button
               className="quiet"
-              onClick={() => run(() => window.shell.request("helper.install"))}
+              disabled={busy || helperBusy}
+              onClick={() => void helperAction("helper.uninstall")}
             >
-              安装系统辅助服务
+              卸载辅助服务
             </Button>
-          </div>
-        ) : null}
+          )}
+          <InfoTip label="系统辅助服务说明">
+            {(helper?.message ?? "免费本机使用，无需 Apple 开发者会员。") +
+              " 安装或卸载前请先断开代理连接。"}
+          </InfoTip>
+        </div>
         <div className="settingssurface">
           <SettingRow
             label="启动时恢复代理连接"

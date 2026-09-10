@@ -279,6 +279,8 @@ export interface ShellPort {
       | "ui.draft.get"
       | "ui.draft.set"
       | "helper.install"
+      | "helper.info"
+      | "helper.uninstall"
       | "recovery.status"
       | "recovery.disconnect"
       | "recovery.restore",

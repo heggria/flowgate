@@ -3,6 +3,12 @@ import Darwin
 import SystemConfiguration
 struct ProxyChange: Codable { let service: String; let keys: [String]; let before: Data; let applied: Data }
 struct RecoveryRecord: Codable { var phase: String; var changes: [ProxyChange]; var operationId: String; var kernelPID: Int32?; var kernelBirth: String? }
+func effectiveProxyMatches(_ current: [String: Any], port: Int) -> Bool {
+    if current["ProxyAutoConfigEnable"] as? Int == 1 || current["ProxyAutoDiscoveryEnable"] as? Int == 1 { return false }
+    return ["HTTP", "HTTPS", "SOCKS"].allSatisfy {
+        current[$0 + "Enable"] as? Int == 1 && current[$0 + "Proxy"] as? String == "127.0.0.1" && current[$0 + "Port"] as? Int == port
+    }
+}
 final class OwnershipJournal {
     let path: URL
     var record = RecoveryRecord(phase: "idle", changes: [], operationId: "")
@@ -42,16 +48,30 @@ struct MacProxyBackend: ProxyBackend {
 final class MacProxyTransaction: ProxyTransaction {
     let prefs: SCPreferences
     init() throws {
-        guard let value = SCPreferencesCreate(nil, "FlowGate" as CFString, nil), SCPreferencesLock(value, false) else { throw NSError(domain: "系统网络配置繁忙，需重试", code: 15) }
+        guard let value = SCPreferencesCreate(nil, "FlowGate" as CFString, nil) else { throw NSError(domain: "无法读取系统网络配置", code: 15) }
+        var locked = SCPreferencesLock(value, false)
+        let deadline = Date().addingTimeInterval(1)
+        while !locked && Date() < deadline { Thread.sleep(forTimeInterval: 0.02); locked = SCPreferencesLock(value, false) }
+        guard locked else { throw NSError(domain: "系统网络配置繁忙，需重试", code: 15) }
         prefs = value
     }
     func unlock() { SCPreferencesUnlock(prefs) }
     func services() throws -> [String] {
         guard let values = SCNetworkServiceCopyAll(prefs) as? [SCNetworkService] else { throw NSError(domain: "无可用网络服务", code: 16) }
-        return values.compactMap { service in
+        let ids = values.compactMap { service -> String? in
             guard SCNetworkServiceGetEnabled(service), SCNetworkServiceCopyProtocol(service, kSCNetworkProtocolTypeProxies) != nil, let id = SCNetworkServiceGetServiceID(service) else { return nil }
             return id as String
         }
+        // Network Extension VPNs can expose a transient service in the service
+        // list while overriding its persistent proxy settings with dynamic state.
+        // Do not report success or overwrite another provider's dynamic state.
+        if let store = SCDynamicStoreCreate(nil, "FlowGate" as CFString, nil, nil),
+           let global = SCDynamicStoreCopyValue(store, "State:/Network/Global/IPv4" as CFString) as? [String: Any],
+           let primary = global["PrimaryService"] as? String,
+           !ids.contains(primary) || (global["PrimaryInterface"] as? String ?? "").hasPrefix("utun") {
+            throw NSError(domain: "当前 VPN 接管默认网络，系统代理无法全局生效；请先断开 VPN，或使用手动代理模式", code: 39)
+        }
+        return ids
     }
     func read(_ id: String) throws -> [String: Any] {
         guard let service = SCNetworkServiceCopy(prefs, id as CFString), let proto = SCNetworkServiceCopyProtocol(service, kSCNetworkProtocolTypeProxies) else { throw NSError(domain: "网络服务已不可用", code: 13) }
@@ -65,6 +85,14 @@ final class MacProxyTransaction: ProxyTransaction {
 final class SystemProxyOwner {
     let journal: OwnershipJournal
     let backend: ProxyBackend
+    func isEffective() -> Bool {
+        guard let store = SCDynamicStoreCreate(nil, "FlowGate" as CFString, nil, nil),
+              let current = SCDynamicStoreCopyProxies(store) as? [String: Any],
+              let change = journal.record.changes.first,
+              let applied = try? JSONSerialization.jsonObject(with: change.applied) as? [String: Any],
+              let port = applied["HTTPPort"] as? Int else { return false }
+        return effectiveProxyMatches(current, port: port)
+    }
     func isCurrentOwner(operationId: String) -> Bool {
         guard journal.record.operationId == operationId, !journal.record.changes.isEmpty else { return false }
         do {

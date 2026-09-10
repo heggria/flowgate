@@ -42,7 +42,7 @@ final class NetworkEngine {
         if let process = kernel, process.isRunning { value["pid"] = process.processIdentifier; value["appliedRevision"] = revision }
         value["operationId"] = operation
         if kernel?.isRunning == true { value["tunInterface"] = tunInterface }
-        value["systemProxyOwned"] = privileged && mode == "system" && kernel?.isRunning == true && proxies.isCurrentOwner(operationId: operation ?? "")
+        value["systemProxyOwned"] = privileged && mode == "system" && kernel?.isRunning == true && proxies.isCurrentOwner(operationId: operation ?? "") && proxies.isEffective()
         value["message"] = lastError ?? (privileged ? "系统辅助服务已连接" : "手动代理可用；系统代理与 TUN 需要批准特权辅助服务")
         return value
     }
@@ -64,13 +64,18 @@ final class NetworkEngine {
         let inbound = inbounds[0]
         if mode == "tun" { guard privileged, inbound["type"] as? String == "tun" else { throw NSError(domain: "TUN 需要特权辅助服务", code: 21) } }
         else { guard inbound["type"] as? String == "mixed", inbound["listen"] as? String == "127.0.0.1", let port = inbound["listen_port"] as? Int, (1024...65535).contains(port) else { throw NSError(domain: "只能监听本机非特权端口", code: 22) } }
-        func checkKeys(_ object: Any) throws {
+        func checkKeys(_ object: Any, context: String = "") throws {
             if let map = object as? [String: Any] {
                 for (key, value) in map {
                     if key.hasSuffix("_path") || ["output", "cache_file", "execute", "script", "certificate_provider"].contains(key) { throw NSError(domain: "配置包含禁止的文件或执行能力", code: 23) }
-                    try checkKeys(value)
+                    if key == "path" {
+                        let transportURL = context.hasSuffix(".transport") && ["ws", "http", "httpupgrade"].contains(map["type"] as? String ?? "")
+                        let dnsURL = context == "dns.servers[]" && map["type"] as? String == "https"
+                        guard transportURL || dnsURL else { throw NSError(domain: "配置不允许读取本机文件", code: 23) }
+                    }
+                    try checkKeys(value, context: context.isEmpty ? key : context + "." + key)
                 }
-            } else if let array = object as? [Any] { for value in array { try checkKeys(value) } }
+            } else if let array = object as? [Any] { for value in array { try checkKeys(value, context: context + "[]") } }
         }
         try checkKeys(config)
     }
@@ -105,7 +110,12 @@ final class NetworkEngine {
         do {
             try Data(contentsOf: candidate).write(to: active, options: .atomic)
             try launch(active); revision = rev; operation = op; self.mode=mode; lastError = nil
-            if mode == "system", let inbounds = config["inbounds"] as? [[String: Any]], let port = inbounds.first?["listen_port"] as? Int { try proxies.apply(port: port, operationId: op) }
+            if mode == "system", let inbounds = config["inbounds"] as? [[String: Any]], let port = inbounds.first?["listen_port"] as? Int {
+                try proxies.apply(port: port, operationId: op)
+                let deadline = Date().addingTimeInterval(2)
+                while !proxies.isEffective() && Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
+                guard proxies.isEffective() else { throw NSError(domain: "系统代理未实际生效，已尝试恢复；请检查当前 VPN 或其他网络工具", code: 40) }
+            }
             journal.record.phase = "running"; journal.record.operationId = op; journal.record.kernelPID = kernel?.processIdentifier; journal.record.kernelBirth=kernel.map {processBirth($0.processIdentifier)} ?? nil; try journal.persist()
         } catch {
             try? stop()

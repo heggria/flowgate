@@ -47,6 +47,7 @@ export async function verifyArtifacts(directory) {
     "sing-box",
     "flowgate-bridge",
     "flowgate-helper",
+    "flowgate-local-installer",
     "release/index.html",
     "release/service.cjs",
   ])
