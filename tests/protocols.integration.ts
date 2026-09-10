@@ -1,3 +1,4 @@
+import { parseSubscriptionDocument } from "../packages/extensions/src/subscriptions/index";
 import { requestHttpEgress } from "../packages/runtime/src/egress";
 import { createServer as createHTTPS } from "node:https";
 import assert from "node:assert/strict";
@@ -247,14 +248,17 @@ try {
   const config = initialConfiguration();
   config.settings.listenPort = port;
   config.settings.dnsServer = `udp://127.0.0.1:${dns.address().port}`;
-  config.nodes = definitions.map((d, index) => ({
-    id: d.type,
-    name: d.type,
-    type: d.type,
-    server: "127.0.0.1",
-    port: ports[index],
-    options: d.options,
-  }));
+  config.nodes = parseSubscriptionDocument(
+    JSON.stringify({
+      outbounds: definitions.map((d, index) => ({
+        tag: d.type,
+        type: d.type,
+        server: "127.0.0.1",
+        server_port: ports[index],
+        ...d.options,
+      })),
+    }),
+  ).nodes.map((node) => ({ ...node, id: node.type }));
   for (const definition of definitions) {
     config.settings.selectedNode = definition.type;
     config.revision++;
@@ -283,6 +287,49 @@ try {
       definition.type + ": TCP, IPv6 destination, DNS, SOCKS UDP forwarding",
     );
     console.log("PASS protocol " + definition.type);
+  }
+  const vmessPort = ports[definitions.findIndex((d) => d.type === "vmess")];
+  const sourceFormats = [
+    `proxies:\n- {name: converted, type: vmess, server: 127.0.0.1, port: ${vmessPort}, uuid: ${uuid}, cipher: auto, alterId: 0}`,
+    `vmess=127.0.0.1:${vmessPort},method=auto,password=${uuid},aead=true,tag=converted`,
+    `[Proxy]\nconverted=vmess,127.0.0.1,${vmessPort},auto,"${uuid}",alterId=0`,
+    `[Proxy]\nconverted=vmess,127.0.0.1,${vmessPort},username=${uuid},vmess-aead=true`,
+    `[Proxy]\nconverted=vmess,127.0.0.1,${vmessPort},password=${uuid},method=auto,alterId=0`,
+    "vmess://" +
+      Buffer.from(
+        JSON.stringify({
+          v: "2",
+          ps: "converted",
+          add: "127.0.0.1",
+          port: vmessPort,
+          id: uuid,
+          aid: 0,
+          net: "tcp",
+          type: "none",
+        }),
+      ).toString("base64"),
+  ];
+  for (const source of sourceFormats) {
+    const document = parseSubscriptionDocument(source);
+    const node = { ...document.nodes[0], id: "converted" };
+    config.nodes = config.nodes
+      .filter((n) => n.id !== "converted")
+      .concat(node);
+    config.settings.selectedNode = node.id;
+    config.revision++;
+    await native.apply(
+      compileConfiguration(config),
+      config.revision,
+      "converted-" + document.format,
+    );
+    assert.equal(
+      await request(`http://127.0.0.1:${originPort}/`),
+      "protocol-fixture-ok",
+    );
+    await udp();
+    checks.push(
+      document.format + ": converted VMess TCP and UDP reach local origin",
+    );
   }
   assert.ok(dnsQueries > 0);
   config.settings.selectedNode = "socks";

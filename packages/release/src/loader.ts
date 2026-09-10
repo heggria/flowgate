@@ -4,6 +4,7 @@ import { lstat, readFile, readdir, realpath } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import type { ReleaseSet } from "../../contracts/src/index";
 import { builtinExtensions } from "../../contracts/src/extensions";
+import { SHELL_API, CONFIGURATION_SCHEMA } from "../../contracts/src/version";
 export function validateReleaseManifest(manifest: ReleaseSet) {
   if (
     !manifest ||
@@ -132,10 +133,10 @@ export function validateRelease(manifest: ReleaseSet) {
   validateReleaseManifest(manifest);
   if (
     manifest.protocol !== 1 ||
-    manifest.shellApi.min > 1 ||
-    manifest.shellApi.max < 1 ||
-    manifest.schema.min > 1 ||
-    manifest.schema.max < 1
+    manifest.shellApi.min > SHELL_API ||
+    manifest.shellApi.max < SHELL_API ||
+    manifest.schema.min > CONFIGURATION_SCHEMA ||
+    manifest.schema.max < CONFIGURATION_SCHEMA
   )
     throw new Error("版本不兼容；可能需要完整应用更新");
   if (

@@ -4,7 +4,10 @@ import { networkPath } from "../../domain/src/network-path";
 import { requestTrace } from "../../runtime/src/trace-context";
 import { measureOutbound, type NodeMeasurement } from "./kernel/measurement";
 import { readHandoff, writeHandoff } from "./handoff";
-import { BUILD_VERSION } from "../../contracts/src/version";
+import {
+  BUILD_VERSION,
+  CONFIGURATION_SCHEMA,
+} from "../../contracts/src/version";
 import { networkConflicts } from "../../domain/src/network-conflicts";
 import { randomUUID } from "node:crypto";
 import type {
@@ -23,6 +26,8 @@ import {
   validateConfiguration,
 } from "../../domain/src/configuration";
 import { StateStore } from "./store";
+import { SubscriptionService } from "./subscriptions";
+import { SubscriptionRefresh } from "./subscription-refresh";
 import type { KernelTelemetry } from "./kernel/telemetry";
 import { NetworkObserver } from "./network-observer";
 import {
@@ -31,6 +36,8 @@ import {
   type ExtensionState,
 } from "../../contracts/src/extensions";
 export class ServiceCore {
+  private readonly subscriptions: SubscriptionService;
+  private readonly subscriptionRefresh: SubscriptionRefresh;
   private extensionStates: ExtensionState[] = [];
   private async readExtensions() {
     try {
@@ -114,6 +121,39 @@ export class ServiceCore {
     readonly version = BUILD_VERSION,
     adapterFactory: (native: NativePort) => RuntimeModule = singBoxAdapter,
   ) {
+    this.subscriptions = new SubscriptionService(
+      () => this.store.configuration,
+      this.extension,
+    );
+    this.subscriptionRefresh = new SubscriptionRefresh(
+      () => this.store.configuration.subscriptions,
+      async (id, signal) => {
+        try {
+          if (this.lifecycle !== "ready") return;
+          const preview = await this.subscriptions.preview({ id }, signal);
+          if (!preview.canCommit || preview.requiresReview)
+            throw new Error("需要人工查看转换预览");
+          await this.request(
+            "subscription.refresh",
+            { id, previewId: preview.id },
+            "subscription-auto-" + randomUUID(),
+            signal,
+          );
+        } catch {
+          if (signal.aborted || this.lifecycle !== "ready") return;
+          await this.store.transact(async () => {
+            if (signal.aborted) return;
+            const source = this.store.configuration.subscriptions.find(
+              (s) => s.id === id,
+            );
+            if (source) {
+              source.error = "自动更新未提交，已保留原配置；请打开更新预览检查";
+              await this.store.persist();
+            }
+          });
+        }
+      },
+    );
     const bootstrapTrace = randomUUID().replaceAll("-", "");
     this.native = new KernelRuntime(adapterFactory(native), () => ({
       operationId: "service-" + store.epoch,
@@ -126,7 +166,7 @@ export class ServiceCore {
       shellVersion: BUILD_VERSION,
       hostVersion: version,
       protocolVersion: 1,
-      schemaVersion: 1,
+      schemaVersion: CONFIGURATION_SCHEMA,
     }));
     this.networkObserver = new NetworkObserver(
       async () => (await this.extension("network.inspect")) as NetworkState,
@@ -227,6 +267,7 @@ export class ServiceCore {
     } catch {}
     this.lifecycle = "ready";
     this.networkObserver.start();
+    this.subscriptionRefresh.start();
     if (
       this.store.configuration.settings.autoConnect &&
       kernel.status === "stopped"
@@ -272,7 +313,12 @@ export class ServiceCore {
     const kernel = await this.native.status();
     const visible = structuredClone(this.store.configuration);
     for (const node of visible.nodes) node.options = {};
-    for (const subscription of visible.subscriptions) subscription.url = "";
+    for (const subscription of visible.subscriptions) {
+      subscription.canRefresh = !!subscription.url;
+      subscription.url = "";
+      delete subscription.etag;
+      delete subscription.lastModified;
+    }
     for (const source of visible.ruleSources ?? []) source.url = "";
     return {
       protocol: 1,
@@ -307,7 +353,7 @@ export class ServiceCore {
     if (method === "health")
       return {
         protocol: 1,
-        schema: 1,
+        schema: 2,
         epoch: this.store.epoch,
         lifecycle: this.lifecycle,
       };
@@ -374,6 +420,10 @@ export class ServiceCore {
         return this.store.operations.find((o) => o.id === payload?.id) ?? null;
       });
     }
+    if (method === "subscription.preview") {
+      if (this.lifecycle !== "ready") throw new Error("服务不可用");
+      return this.subscriptions.preview(payload ?? {}, signal);
+    }
     if (!operationId) throw new Error("写操作需要 operationId");
     const allowed = [
       "extensions.setEnabled",
@@ -386,6 +436,7 @@ export class ServiceCore {
       "subscription.refresh",
       "node.remove",
       "node.update",
+      "group.select",
       "subscription.rename",
       "subscription.remove",
       "proxy.connect",
@@ -515,6 +566,7 @@ export class ServiceCore {
           await this.native.stop(operationId);
         } else {
           const next = structuredClone(this.store.configuration);
+          let metadataOnly = false;
           if (method === "configuration.save") {
             if (payload?.revision !== next.revision)
               throw new Error("配置已更新，请刷新后再保存");
@@ -531,6 +583,20 @@ export class ServiceCore {
             node.name = String(payload.name ?? node.name).trim();
             node.server = String(payload.server ?? node.server).trim();
             node.port = payload.port ?? node.port;
+          }
+          if (method === "group.select") {
+            const group = next.groups?.find(
+              (group) => group.id === payload?.id,
+            );
+            if (payload?.revision !== next.revision)
+              throw new Error("配置已变化，请刷新后再选择");
+            if (
+              !group ||
+              group.type !== "selector" ||
+              !group.members.includes(payload.member)
+            )
+              throw new Error("策略组或成员不存在");
+            group.selected = payload.member;
           }
           if (method === "subscription.rename") {
             const sub = next.subscriptions.find((s) => s.id === payload?.id);
@@ -550,6 +616,16 @@ export class ServiceCore {
             next.subscriptions = next.subscriptions.filter(
               (s) => s.id !== payload.id,
             );
+            next.rules = next.rules.map((rule) =>
+              rule.sourceId === payload.id
+                ? { ...rule, sourceId: undefined }
+                : rule,
+            );
+            next.groups = (next.groups ?? []).map((group) =>
+              group.sourceId === payload.id
+                ? { ...group, sourceId: "local" }
+                : group,
+            );
             // Keep imported nodes as local entries so deleting a source cannot silently break active rules.
             next.nodes = next.nodes.map((n) =>
               removed.has(n.id) ? { ...n, sourceId: undefined } : n,
@@ -567,78 +643,24 @@ export class ServiceCore {
             method === "subscription.import" ||
             method === "subscription.refresh"
           ) {
-            let text: string = payload?.text;
-            let sourceId: string | undefined;
-            if (method === "subscription.refresh") {
-              const sub = next.subscriptions.find((s) => s.id === payload?.id);
-              if (!sub) throw new Error("订阅不存在");
-              sourceId = sub.id;
-              const result = await this.extension(
-                "subscription.fetch",
-                {
-                  url: sub.url,
-                },
-                signal,
-              );
-              text = String(result);
-            } else if (payload?.url) {
-              const url = new URL(payload.url);
-              if (url.protocol !== "https:")
-                throw new Error("订阅链接必须使用 HTTPS");
-              sourceId = randomUUID();
-              text = String(
-                await this.extension(
-                  "subscription.fetch",
-                  { url: url.href },
+            const previewId =
+              payload?.previewId ??
+              (
+                await this.subscriptions.preview(
+                  method === "subscription.refresh"
+                    ? { ...payload, id: payload?.id }
+                    : { ...payload, id: undefined },
                   signal,
-                ),
-              );
-              next.subscriptions.push({
-                id: sourceId,
-                name: String(payload.name || "订阅"),
-                url: url.href,
-                count: 0,
-              });
-            }
-            if (typeof text !== "string")
-              throw new Error("请输入订阅链接或配置内容");
-            const nodes = (await this.extension(
-              "subscription.parse",
-              {
-                text,
-                sourceId,
-              },
-              signal,
-            )) as NodeConfig[];
-            if (sourceId) {
-              const identity = (n: NodeConfig) =>
-                [n.type, n.name, n.server, n.port].join("|");
-              const previous = new Map(
-                next.nodes
-                  .filter((n) => n.sourceId === sourceId)
-                  .map((n) => [identity(n), n.id]),
-              );
-              for (const node of nodes) {
-                node.id = previous.get(identity(node)) ?? node.id;
-              }
-            }
-            next.nodes = next.nodes
-              .filter((n) => !sourceId || n.sourceId !== sourceId)
-              .concat(nodes);
-            if (sourceId) {
-              const sub = next.subscriptions.find((s) => s.id === sourceId)!;
-              sub.updatedAt = new Date().toISOString();
-              sub.count = nodes.length;
-              delete sub.error;
-            }
-            if (
-              next.settings.selectedNode !== "direct" &&
-              !next.nodes.some((n) => n.id === next.settings.selectedNode) &&
-              !(next.externalNetworks ?? []).some(
-                (n) => n.id === next.settings.selectedNode,
-              )
-            )
-              throw new Error("订阅移除了当前出口，请先选择其他节点再更新");
+                )
+              ).id;
+            metadataOnly = this.subscriptions.metadataOnly(previewId);
+            const imported = this.subscriptions.commit(
+              previewId,
+              method === "subscription.refresh",
+              payload?.id,
+              !!payload?.previewId && payload.reviewed === true,
+            );
+            Object.assign(next, imported);
           }
           if (method === "ruleset.remove") {
             next.ruleSources = (next.ruleSources ?? []).filter(
@@ -702,7 +724,8 @@ export class ServiceCore {
             source.updatedAt = new Date().toISOString();
             delete source.error;
           }
-          next.revision = this.store.configuration.revision + 1;
+          next.revision =
+            this.store.configuration.revision + (metadataOnly ? 0 : 1);
           validateConfiguration(next);
           signal?.throwIfAborted();
           this.store.configuration = next;
@@ -757,8 +780,11 @@ export class ServiceCore {
   }
   async drain() {
     this.lifecycle = "draining";
+    this.subscriptionRefresh.stop();
+    this.subscriptions.pause();
     this.networkObserver.stop();
     for (const controller of this.measuring.values()) controller.abort();
+    await this.subscriptionRefresh.drain();
     await this.store.drain();
     try {
       await this.reconcileNative();
@@ -770,7 +796,7 @@ export class ServiceCore {
       await writeHandoff(this.store.directory, {
         version: 1,
         protocol: 1,
-        schema: 1,
+        schema: 2,
         releaseSet: this.releaseSet,
         epoch: this.store.epoch,
         revision: this.store.configuration.revision,
@@ -783,14 +809,18 @@ export class ServiceCore {
         at: new Date().toISOString(),
       });
     } catch (error) {
+      this.subscriptions.resume();
       this.store.resume();
       this.native.resume();
       this.lifecycle = "ready";
       this.networkObserver.resume();
+      this.subscriptionRefresh.start();
       throw error;
     }
   }
   async stop() {
+    this.subscriptionRefresh.stop();
+    this.subscriptions.pause();
     await this.drain();
     this.telemetry?.close();
     await this.store.close();
@@ -798,6 +828,8 @@ export class ServiceCore {
     this.lifecycle = "stopped";
   }
   suspend() {
+    this.subscriptionRefresh.stop();
+    this.subscriptions.pause();
     this.store.pause();
     this.lifecycle = "draining";
     this.networkObserver.stop();
@@ -808,9 +840,11 @@ export class ServiceCore {
     await this.reconcileNative();
     this.networkObserver.resume();
     await this.networkObserver.refresh().catch(() => {});
+    this.subscriptions.resume();
     this.store.resume();
     this.native.resume();
     this.lifecycle = "ready";
+    this.subscriptionRefresh.start();
   }
   async resolveEgress(target: string) {
     const url = new URL(target);

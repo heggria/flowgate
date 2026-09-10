@@ -133,9 +133,9 @@ test("release rejects tampering, missing/extra files, traversal, links and incom
     id: "v1",
     version: 1,
     channel: "stable",
-    shellApi: { min: 1, max: 1 },
+    shellApi: { min: 2, max: 2 },
     protocol: 1,
-    schema: { min: 1, max: 1 },
+    schema: { min: 2, max: 2 },
     ui: "ui.js",
     service: "ui.js",
     extension: "ui.js",
@@ -159,7 +159,7 @@ test("release rejects tampering, missing/extra files, traversal, links and incom
     await symlink("/etc/hosts", join(dir, "ui.js"));
     await assert.rejects(() => verifyDirectory(dir, m));
     assert.throws(() =>
-      validateRelease({ ...m, shellApi: { min: 2, max: 2 } }),
+      validateRelease({ ...m, shellApi: { min: 3, max: 3 } }),
     );
     assert.throws(() =>
       validateRelease({ ...m, files: { "../bad.js": m.files["ui.js"] } }),
@@ -251,4 +251,32 @@ test("gateway propagates client cancellation and releases active stream", async 
   }
 });
 
-test('slow gateway client reaches backpressure without unbounded buffers',async()=>{const {connect}=await import('node:net');const g=new MockGateway('slow-token',{id:'explicit',resolve:async()=>({id:'explicit'})},1,8192);await g.start();const socket=connect(g.port,'127.0.0.1');try{await new Promise<void>(r=>socket.once('connect',r));socket.write('POST /v1/mock HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer slow-token\r\nContent-Length: 0\r\n\r\n');socket.pause();const deadline=Date.now()+3000;while(!g.backpressureWaits&&Date.now()<deadline)await new Promise(r=>setTimeout(r,20));assert.ok(g.backpressureWaits>0);assert.ok(g.maxBuffered<131072);socket.destroy();await g.drain(Date.now()+1000);assert.equal(g.cancelled,1);}finally{socket.destroy();await g.stop();}});
+test("slow gateway client reaches backpressure without unbounded buffers", async () => {
+  const { connect } = await import("node:net");
+  const g = new MockGateway(
+    "slow-token",
+    { id: "explicit", resolve: async () => ({ id: "explicit" }) },
+    1,
+    8192,
+  );
+  await g.start();
+  const socket = connect(g.port, "127.0.0.1");
+  try {
+    await new Promise<void>((r) => socket.once("connect", r));
+    socket.write(
+      "POST /v1/mock HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer slow-token\r\nContent-Length: 0\r\n\r\n",
+    );
+    socket.pause();
+    const deadline = Date.now() + 3000;
+    while (!g.backpressureWaits && Date.now() < deadline)
+      await new Promise((r) => setTimeout(r, 20));
+    assert.ok(g.backpressureWaits > 0);
+    assert.ok(g.maxBuffered < 131072);
+    socket.destroy();
+    await g.drain(Date.now() + 1000);
+    assert.equal(g.cancelled, 1);
+  } finally {
+    socket.destroy();
+    await g.stop();
+  }
+});

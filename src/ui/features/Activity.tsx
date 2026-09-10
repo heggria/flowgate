@@ -72,6 +72,7 @@ export function Activity({ snapshot }: FeatureProps) {
                     "subscription.import": "导入节点",
                     "subscription.refresh": "更新订阅",
                     "node.remove": "移除节点",
+                    "group.select": "选择策略组成员",
                   } as Record<string, string>
                 )[o.kind] ?? o.kind}
               </strong>

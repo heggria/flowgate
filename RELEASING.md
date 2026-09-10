@@ -31,3 +31,7 @@ Release manifests declare publisher, platform, component versions, shell/protoco
 After signing, install the app, register/approve its helper and perform the outstanding native/network matrix in [ACCEPTANCE.md](ACCEPTANCE.md). Configure the separate Squirrel.Mac HTTPS application feed for full shell/native/Electron upgrades. Business updates do not replace that channel.
 
 Primary references: [TUF JS](https://github.com/theupdateframework/tuf-js), [Electron signing](https://www.electronjs.org/docs/latest/tutorial/code-signing), [osx-sign](https://github.com/electron/osx-sign), [notarize](https://github.com/electron/notarize).
+
+## 0.3 subscription compatibility boundary
+
+Ship subscription conversion in a full application: `packages/contracts/src/compatibility.json` sets shell API 2 and state schema 2, while the wire protocol remains 1. Generated Release Sets require these bounds; do not publish the new renderer/service as compatible with API 1. The schema-1 backup and downgrade restrictions are described in [SUBSCRIPTIONS.md](SUBSCRIPTIONS.md). Keep existing user installations intact when producing development artifacts; use a new `FLOWGATE_PACKAGE_DIR`.

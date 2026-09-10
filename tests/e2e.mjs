@@ -38,7 +38,8 @@ try {
       ],
     }),
   );
-  await page.getByRole("button", { name: "导入节点", exact: true }).click();
+  await page.getByRole("button", { name: "预览转换", exact: true }).click();
+  await page.getByRole("button", { name: "确认导入", exact: true }).click();
   await page.getByText("Local test", { exact: true }).waitFor();
   await page.getByRole("dialog").waitFor({ state: "hidden" });
   await page.getByRole("button", { name: "分流规则", exact: false }).click();

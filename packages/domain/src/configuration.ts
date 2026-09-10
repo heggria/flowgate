@@ -1,9 +1,10 @@
 import type { Configuration, NodeConfig } from "../../contracts/src/index";
 import { tunAddresses } from "./ip-range";
 import { isLoopbackHost } from "./endpoint";
+import { outboundOptionFields, validateNodeOptions } from "./node-options";
 export function initialConfiguration(): Configuration {
   return {
-    schema: 1,
+    schema: 2,
     revision: 0,
     nodes: [],
     subscriptions: [],
@@ -20,7 +21,7 @@ export function initialConfiguration(): Configuration {
 }
 export function validateConfiguration(c: Configuration): void {
   if (
-    c.schema !== 1 ||
+    ![1, 2].includes(c.schema) ||
     !Number.isSafeInteger(c.revision) ||
     !Array.isArray(c.nodes) ||
     c.nodes.length > 5000 ||
@@ -46,6 +47,11 @@ export function validateConfiguration(c: Configuration): void {
     if (ids.has(n.id)) throw new Error("节点标识重复");
     ids.add(n.id);
   }
+  if (
+    c.externalNetworks !== undefined &&
+    (!Array.isArray(c.externalNetworks) || c.externalNetworks.length > 100)
+  )
+    throw new Error("外部网络数量无效");
   for (const network of c.externalNetworks ?? []) {
     if (
       !/^[\w.-]{1,100}$/.test(network.id) ||
@@ -63,6 +69,61 @@ export function validateConfiguration(c: Configuration): void {
       throw new Error("外部网络 DNS 无效");
     ids.add(network.id);
   }
+  const groups = c.groups ?? [];
+  if (!Array.isArray(groups) || groups.length > 100)
+    throw new Error("策略组数量无效");
+  for (const group of groups) {
+    if (
+      !group ||
+      !/^[\w.-]{1,100}$/.test(group.id) ||
+      ids.has(group.id) ||
+      typeof group.name !== "string" ||
+      !group.name.trim() ||
+      group.name.length > 200 ||
+      !["selector", "urltest"].includes(group.type) ||
+      !Array.isArray(group.members) ||
+      !group.members.length ||
+      group.members.length > 5000
+    )
+      throw new Error("策略组无效");
+    if (group.url) {
+      const url = new URL(group.url);
+      if (url.protocol !== "https:" || url.username || url.password)
+        throw new Error("策略组检测地址必须使用 HTTPS");
+    }
+    if (
+      group.interval !== undefined &&
+      (!Number.isInteger(group.interval) ||
+        group.interval < 1 ||
+        group.interval > 604800)
+    )
+      throw new Error("策略组检测间隔无效");
+    if (
+      group.tolerance !== undefined &&
+      (!Number.isInteger(group.tolerance) ||
+        group.tolerance < 0 ||
+        group.tolerance > 65535)
+    )
+      throw new Error("策略组检测容差无效");
+    if (group.selected !== undefined && !group.members.includes(group.selected))
+      throw new Error("策略组选中成员不存在");
+    ids.add(group.id);
+  }
+  const visited = new Set<string>();
+  const visit = (id: string, path: Set<string>) => {
+    if (path.has(id)) throw new Error("策略组引用形成循环");
+    if (visited.has(id)) return;
+    const group = groups.find((g) => g.id === id);
+    if (!group) return;
+    const next = new Set(path).add(id);
+    for (const member of group.members) {
+      if (!ids.has(member) || ["select", "block"].includes(member))
+        throw new Error("策略组引用不存在或不支持的出口");
+      visit(member, next);
+    }
+    visited.add(id);
+  };
+  for (const group of groups) visit(group.id, new Set());
   if (
     !ids.has(c.settings.selectedNode) ||
     c.settings.selectedNode === "select" ||
@@ -78,6 +139,30 @@ export function validateConfiguration(c: Configuration): void {
   )
     throw new Error("DNS 地址须为 HTTPS、TLS 或 UDP");
   const sourceIds = new Set<string>();
+  for (const subscription of c.subscriptions) {
+    if (
+      !subscription ||
+      !/^[\w.-]{1,100}$/.test(subscription.id) ||
+      sourceIds.has(subscription.id) ||
+      typeof subscription.name !== "string" ||
+      !subscription.name.trim() ||
+      subscription.name.length > 200
+    )
+      throw new Error("订阅来源无效");
+    if (subscription.url) {
+      const url = new URL(subscription.url);
+      if (url.protocol !== "https:" || url.username || url.password)
+        throw new Error("订阅地址必须使用 HTTPS");
+    }
+    if (
+      subscription.refreshHours !== undefined &&
+      (!Number.isInteger(subscription.refreshHours) ||
+        subscription.refreshHours < 0 ||
+        subscription.refreshHours > 168)
+    )
+      throw new Error("订阅刷新间隔无效");
+    sourceIds.add(subscription.id);
+  }
   if (
     c.ruleSources &&
     (!Array.isArray(c.ruleSources) || c.ruleSources.length > 100)
@@ -102,9 +187,13 @@ export function validateConfiguration(c: Configuration): void {
   }
   for (const r of c.rules) {
     if (
-      !["domain_suffix", "domain", "ip_cidr", "process_name"].includes(
-        r.kind,
-      ) ||
+      ![
+        "domain_suffix",
+        "domain",
+        "domain_keyword",
+        "ip_cidr",
+        "process_name",
+      ].includes(r.kind) ||
       typeof r.value !== "string" ||
       !r.value.trim() ||
       r.value.length > 500 ||
@@ -141,9 +230,13 @@ export function validateNode(n: NodeConfig) {
     typeof n.options !== "object"
   )
     throw new Error("节点格式无效");
+  if (n.optionsVersion !== undefined && n.optionsVersion !== 2)
+    throw new Error("节点选项版本无效");
+  if (n.optionsVersion === 2) validateNodeOptions(n.type, n.options, true);
 }
 // Only explicitly supported outbound fields survive import. No arbitrary configuration execution.
-const fields = [
+const fields = outboundOptionFields;
+const legacyFields = [
   "username",
   "password",
   "method",
@@ -166,7 +259,9 @@ export function nodeOutbound(n: NodeConfig) {
     server: n.server,
     server_port: n.port,
     ...Object.fromEntries(
-      fields.filter((k) => k in n.options).map((k) => [k, n.options[k]]),
+      (n.optionsVersion === 2 ? fields : legacyFields)
+        .filter((k) => k in n.options)
+        .map((k) => [k, n.options[k]]),
     ),
   };
 }
@@ -259,10 +354,25 @@ export function compileConfiguration(c: Configuration) {
           "direct",
           ...c.nodes.map((n) => n.id),
           ...networks.map((n) => n.id),
+          ...(c.groups ?? []).map((g) => g.id),
         ],
         default: c.settings.selectedNode,
       },
       ...c.nodes.map(nodeOutbound),
+      ...(c.groups ?? []).map((group) => ({
+        type: group.type,
+        tag: group.id,
+        outbounds: group.members,
+        ...(group.type === "selector"
+          ? { default: group.selected ?? group.members[0] }
+          : {
+              ...(group.url ? { url: group.url } : {}),
+              ...(group.interval ? { interval: `${group.interval}s` } : {}),
+              ...(group.tolerance !== undefined
+                ? { tolerance: group.tolerance }
+                : {}),
+            }),
+      })),
       ...networks.map((n) => ({
         type: "direct",
         tag: n.id,
@@ -299,7 +409,9 @@ export function explainRoute(c: Configuration, target: string) {
       : r.kind === "domain_suffix"
         ? target === r.value ||
           target.endsWith("." + r.value.replace(/^\./, ""))
-        : false,
+        : r.kind === "domain_keyword"
+          ? target.includes(r.value)
+          : false,
   );
   return {
     target,

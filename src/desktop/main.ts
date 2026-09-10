@@ -16,6 +16,10 @@ import { backgroundTest } from "../../packages/shell/src/test-mode";
 import { UpdateCoordinator } from "../../packages/shell/src/update-coordinator";
 import { ApplicationUpdate } from "../../packages/shell/src/application-update";
 import { ReleaseManager } from "../../packages/release/src/manager";
+import {
+  SHELL_API,
+  CONFIGURATION_SCHEMA,
+} from "../../packages/contracts/src/version";
 import type { ReleaseSet } from "../../packages/contracts/src/index";
 let shell: DesktopShell,
   service: ProcessSupervisor | undefined,
@@ -423,7 +427,10 @@ else {
             attachCapabilities(host, true);
             try {
               const health = (await host.start()) as any;
-              if (health.protocol !== 1 || health.schema !== 1)
+              if (
+                health.protocol !== 1 ||
+                health.schema !== CONFIGURATION_SCHEMA
+              )
                 throw new Error("预检协议不兼容");
             } finally {
               await host.stop(false);
@@ -478,10 +485,12 @@ else {
 
         "operation.get",
         "configuration.save",
+        "subscription.preview",
         "subscription.import",
         "subscription.refresh",
         "node.remove",
         "node.update",
+        "group.select",
         "subscription.rename",
         "subscription.remove",
         "proxy.connect",
@@ -551,7 +560,7 @@ else {
             operationId: "renderer-" + shell.uiEpoch,
             traceId: randomUUID().replaceAll("-", ""),
             protocolVersion: 1,
-            schemaVersion: 1,
+            schemaVersion: CONFIGURATION_SCHEMA,
           };
         if (input?.method === "ui.trace") {
           const entry = input.payload;
@@ -712,9 +721,9 @@ else {
               service: currentManifest?.components?.service ?? app.getVersion(),
               extension:
                 currentManifest?.components?.extension ?? app.getVersion(),
-              clientApi: 1,
+              clientApi: SHELL_API,
               pluginApi: 1,
-              schema: 1,
+              schema: CONFIGURATION_SCHEMA,
               helper: app.getVersion(),
               kernel: (await native.status()).version ?? "unknown",
               modules: currentManifest?.builtins ?? [],

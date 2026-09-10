@@ -60,7 +60,7 @@ final class NetworkEngine {
     func validate(_ config: [String: Any], mode: String) throws {
         guard Set(config.keys).isSubset(of: ["log", "dns", "inbounds", "outbounds", "route"]),
               let inbounds = config["inbounds"] as? [[String: Any]], inbounds.count == 1,
-              let outbounds = config["outbounds"] as? [[String: Any]], outbounds.count <= 5002 else { throw NSError(domain: "原生配置结构无效", code: 20) }
+              let outbounds = config["outbounds"] as? [[String: Any]], outbounds.count <= 5202 else { throw NSError(domain: "原生配置结构无效", code: 20) }
         let inbound = inbounds[0]
         if mode == "tun" { guard privileged, inbound["type"] as? String == "tun" else { throw NSError(domain: "TUN 需要特权辅助服务", code: 21) } }
         else { guard inbound["type"] as? String == "mixed", inbound["listen"] as? String == "127.0.0.1", let port = inbound["listen_port"] as? Int, (1024...65535).contains(port) else { throw NSError(domain: "只能监听本机非特权端口", code: 22) } }

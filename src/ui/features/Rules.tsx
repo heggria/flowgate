@@ -19,6 +19,7 @@ import { Icon } from "../icons";
 const kindName = {
   domain_suffix: "域名后缀",
   domain: "完整域名",
+  domain_keyword: "域名关键词",
   ip_cidr: "IP 网段",
   process_name: "进程名称",
 };
@@ -82,7 +83,10 @@ export function Rules({
                 <small>
                   {r.sourceId
                     ? (config.ruleSources?.find((s) => s.id === r.sourceId)
-                        ?.name ?? "规则集")
+                        ?.name ??
+                      config.subscriptions.find((s) => s.id === r.sourceId)
+                        ?.name ??
+                      "规则集")
                     : "手动规则"}
                 </small>
               </div>

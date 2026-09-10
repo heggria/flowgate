@@ -109,8 +109,8 @@ try {
   await dialog
     .getByRole("textbox", { name: "订阅链接", exact: true })
     .fill("http://example.com/subscribe");
-  await dialog.getByRole("button", { name: "添加订阅", exact: true }).click();
-  await dialog.getByRole("alert").filter({ hasText: "https://" }).waitFor();
+  await dialog.getByRole("button", { name: "预览转换", exact: true }).click();
+  await dialog.getByRole("alert").filter({ hasText: "HTTPS" }).waitFor();
   assert.equal(fetches, 0);
   await p.screenshot({ path: join(evidence, "subscription-error-light.png") });
   assert.ok(
@@ -121,7 +121,8 @@ try {
     .getByRole("textbox", { name: "订阅链接", exact: true })
     .fill(`https://localhost:${server.address().port}/subscription`);
   await p.screenshot({ path: join(evidence, "subscription-light.png") });
-  await dialog.getByRole("button", { name: "添加订阅", exact: true }).click();
+  await dialog.getByRole("button", { name: "预览转换", exact: true }).click();
+  await dialog.getByRole("button", { name: "确认导入", exact: true }).click();
   await p.getByRole("dialog").waitFor({ state: "hidden" });
   assert.equal(fetches, 1);
   let snapshot = await p.evaluate(() => window.flowgate.request("snapshot"));
@@ -135,7 +136,7 @@ try {
   await dialog
     .getByRole("textbox", { name: "订阅链接", exact: true })
     .fill(`https://localhost:${server.address().port}/slow`);
-  await dialog.getByRole("button", { name: "添加订阅", exact: true }).click();
+  await dialog.getByRole("button", { name: "预览转换", exact: true }).click();
   await dialog.getByRole("button", { name: "取消请求", exact: true }).click();
   await dialog.getByRole("alert").filter({ hasText: "取消" }).waitFor();
   assert.equal(

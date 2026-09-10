@@ -176,9 +176,9 @@ try {
       .getByRole("textbox", { name: "订阅链接", exact: true })
       .fill("https://example.com/fixture");
     await p.evaluate(() => {
-      uiFixture.outcomes["subscription.import"] = "hold";
+      uiFixture.outcomes["subscription.preview"] = "hold";
     });
-    await dialog.getByRole("button", { name: "添加订阅", exact: true }).click();
+    await dialog.getByRole("button", { name: "预览转换", exact: true }).click();
     await dialog.getByRole("button", { name: "取消请求" }).waitFor();
     await p.keyboard.press("Escape");
     assert.equal(await dialog.isVisible(), true);

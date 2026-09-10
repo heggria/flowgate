@@ -43,6 +43,16 @@ export class StateStore {
         await readFile(join(this.directory, "state.json"), "utf8"),
       );
       validateConfiguration(data.configuration);
+      if (data.configuration.schema === 1) {
+        // A v1 app must reject the new schema rather than silently dropping groups/options.
+        // Preflight is read-only; migration backup is created only by the admitted writer.
+        if (!readonly)
+          await atomicWrite(
+            join(this.directory, "state-before-schema-2.json"),
+            data,
+          );
+        data.configuration.schema = 2;
+      }
       this.configuration = data.configuration;
       this.operations = data.operations ?? [];
       this.extensionPreferences = extensionPreferences(

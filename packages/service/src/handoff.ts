@@ -4,7 +4,7 @@ import { atomicWrite } from "./store";
 export interface Handoff {
   version: 1;
   protocol: 1;
-  schema: 1;
+  schema: 1 | 2;
   releaseSet: string;
   epoch: number;
   revision: number;
@@ -22,7 +22,7 @@ export async function readHandoff(
     if (
       handoff.version !== 1 ||
       handoff.protocol !== 1 ||
-      handoff.schema !== 1 ||
+      ![1, 2].includes(handoff.schema) ||
       !Number.isSafeInteger(handoff.revision) ||
       handoff.revision > revision ||
       !Array.isArray(handoff.pendingOperationIds)

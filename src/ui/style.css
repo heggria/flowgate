@@ -3087,3 +3087,46 @@ button[aria-busy="true"] {
     background: HighlightText;
   }
 }
+
+.subscriptionpreview {
+  overflow-wrap: anywhere;
+  font-size: var(--font-sm);
+  line-height: 1.65;
+}
+.subscriptionpreview h3 {
+  margin-top: 0;
+}
+.subscriptionpreview details,
+.conversionoptions {
+  margin: 14px 0;
+}
+.subscriptionpreview summary,
+.conversionoptions > summary {
+  cursor: pointer;
+  color: var(--text);
+  padding: 6px 0;
+}
+.subscriptionpreview ul {
+  padding-left: 20px;
+  max-height: 240px;
+  overflow: auto;
+}
+.subscriptionpreview li + li {
+  margin-top: 8px;
+}
+.conversionoptions .field:first-of-type {
+  margin-top: 16px;
+}
+.conversioncheck {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 14px 0;
+  font-size: var(--font-sm);
+}
+.conversioncheck input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  margin: 3px 0 0;
+}
