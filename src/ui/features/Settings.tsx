@@ -144,8 +144,8 @@ export function Settings({
             </Button>
           )}
           <InfoTip label="系统辅助服务说明">
-            {helper?.message ?? "免费本机使用，无需 Apple 开发者会员。"}{" "}
-            安装或卸载前请先断开代理连接。
+            {(helper?.message ?? "免费本机使用，无需 Apple 开发者会员。") +
+              " 安装或卸载前请先断开代理连接。"}
           </InfoTip>
         </div>
         <div className="settingssurface">
