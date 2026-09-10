@@ -65,3 +65,11 @@ Combobox search keeps Home/End, modifier keys and IME editing; arrows move the a
 Ordinary secondary actions use a soft surface and transparent border; input boundaries retain their contrast. Dialogs, menus, tooltips and noninteractive containers use the structural border token, never the input border token. Mode selection uses a background and the native radio indicator without a second inset border. Active combobox options use a background and a local inset marker; selection retains its checkmark.
 
 Visible focus is integrated into the existing edge with a negative outline offset. Filled primary/destructive actions use a contrasting inner focus color, switches adapt to their checked fill, and invalid fields keep error-colored focus and explanatory text. Composite editors show focus only for their input; separate clear/reveal buttons own their focus. No layout or target size changes on focus. Forced colors retain explicit selection/focus indicators; reduced motion remains supported. This contract targets clear keyboard operation; it is not a claim of a complete WCAG conformance audit.
+
+## Alignment contract
+
+Choice popovers match both edges of their trigger. Action menus align to the trigger's trailing edge. Placement measures the actual content height, chooses the available side, and constrains that side before positioning; a 6 px gap must remain without overlapping the trigger. Choice menus use a flex scroll region, not a fixed guessed subtraction for their search header.
+
+Menu outer padding is 6 px; search leading icons, group labels and option labels share an 8 px inner inset. Search icons do not shrink and are vertically centered in a 36 px row. Resource rows use a shared 10 px inset and 32 px icon column. Source errors cannot vertically recenter the leading icon or actions. Stacked metric rows share column origins. Dashboard grids own their gaps rather than combining a gap with child margins. All settings contributions share the same 780 px maximum width. Switches reset native margins. Banners use the page gutter at every breakpoint.
+
+`tests/ui-spacing.integration.mjs` adds numeric alignment checks across all eight pages, both themes, seven actual CSS viewports, choice and action popovers, and task dialogs. A page fitting its viewport does not by itself establish correct spacing.
