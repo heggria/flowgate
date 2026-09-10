@@ -107,10 +107,32 @@ try {
         .evaluate((el) => getComputedStyle(el).outlineWidth),
       "2px",
     );
+    assert.equal(
+      await ns
+        .locator("..")
+        .evaluate((el) => getComputedStyle(el).outlineOffset),
+      "-2px",
+      "search focus stays on the control edge",
+    );
+    await add.focus();
+    assert.equal(
+      await add.evaluate((el) => getComputedStyle(el).outlineOffset),
+      "-3px",
+      "filled action focus stays inside",
+    );
+    await p.screenshot({ path: `${evidence}/quiet-actions-${theme}.png` });
     await add.click();
     const dialog = p.getByRole("dialog");
     const url = dialog.getByRole("textbox", { name: "订阅链接", exact: true });
     await url.fill("https://example.com/test");
+    assert.equal(
+      await url
+        .locator("..")
+        .evaluate((el) => getComputedStyle(el).outlineOffset),
+      "-2px",
+      "compound editor has no detached ring",
+    );
+    await p.screenshot({ path: `${evidence}/quiet-editor-${theme}.png` });
     await p.evaluate(
       () => (uiFixture.outcomes["subscription.preview"] = "hold"),
     );
@@ -163,6 +185,20 @@ try {
     const radio = p.locator(".modecard input").first();
     await p.keyboard.press("Tab");
     await radio.focus();
+    assert.equal(
+      await radio
+        .locator("..")
+        .evaluate((el) => getComputedStyle(el).outlineOffset),
+      "-2px",
+    );
+    assert.equal(
+      await p
+        .locator(".modecard.selected")
+        .evaluate((el) => getComputedStyle(el).boxShadow),
+      "none",
+      "selection does not add another frame",
+    );
+    await p.screenshot({ path: `${evidence}/quiet-settings-${theme}.png` });
     assert.equal(
       await radio
         .locator("..")

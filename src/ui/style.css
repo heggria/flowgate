@@ -28,7 +28,7 @@
   --green: #267657;
   --control-border: #8a8a92;
   --control-bg: #fff;
-  --focus: #747984;
+  --focus: #555b66;
   --shadow: none;
   --dialog-shadow: 0 24px 80px #0002, 0 4px 12px #00000012;
   --danger-solid: #b53339;
@@ -42,8 +42,8 @@
   --font-md: 13px;
   --font-lg: 14px;
   --font-title: 23px;
-  --shadow-control: 0 1px 2px #00000004;
-  --shadow-button: 0 1px 2px #00000006;
+  --shadow-control: none;
+  --shadow-button: none;
   --shadow-primary: 0 1px 2px #0001, inset 0 1px 0 #ffffff10;
   --shadow-popover: 0 8px 28px #0003;
   --shadow-floating: 0 4px 20px #0002;
@@ -83,7 +83,7 @@
   --green: #7bcaa4;
   --control-border: #777780;
   --control-bg: #28282b;
-  --focus: #a1a6b3;
+  --focus: #b8bdc9;
   --dialog-shadow: 0 24px 80px #0008, 0 0 0 1px #ffffff08;
   --danger-solid: #b94047;
 }
@@ -613,7 +613,7 @@ textarea:disabled {
 }
 .navsearch:has(input:focus-visible) {
   outline: 2px solid var(--focus);
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
 .sidebar nav {
   padding-bottom: 20px;
@@ -1147,8 +1147,8 @@ button {
   align-items: center;
   justify-content: center;
   gap: 7px;
-  background: var(--control-bg);
-  border-color: var(--control-border);
+  background: var(--sidebar);
+  border-color: transparent;
   box-shadow: var(--shadow-button);
 }
 .secondary:not(:disabled):not([aria-disabled="true"]):hover {
@@ -1166,23 +1166,43 @@ button:disabled {
 }
 button:focus-visible {
   outline: 2px solid var(--focus);
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
 input:focus-visible {
   outline: 2px solid var(--focus);
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
 select:focus-visible {
   outline: 2px solid var(--focus);
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
 textarea:focus-visible {
   outline: 2px solid var(--focus);
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
 summary:focus-visible {
   outline: 2px solid var(--focus);
-  outline-offset: 2px;
+  outline-offset: -2px;
+}
+/* Focus replaces the edge, never draws a detached second frame. */
+.primary:focus-visible {
+  outline-color: var(--bg);
+  outline-offset: -3px;
+}
+.dangerbutton:focus-visible {
+  outline-color: var(--on-danger);
+  outline-offset: -3px;
+}
+input.switchinput:focus-visible {
+  outline-color: var(--switch-knob);
+  outline-offset: -2px;
+}
+input.switchinput:checked:focus-visible {
+  outline-color: var(--bg);
+}
+/* Invalid editing keeps the error color and its persistent explanatory text. */
+.invalidfield {
+  --focus: var(--danger);
 }
 /* Focus belongs to the input container OR its separate action, never both. */
 .navsearch input:focus-visible {
@@ -1701,7 +1721,7 @@ label {
 }
 .actionitems {
   background: var(--surface);
-  border: 1px solid var(--control-border);
+  border: 1px solid var(--border);
   box-shadow: var(--shadow-popover);
   border-radius: var(--radius-panel);
   padding: 5px;
@@ -1728,7 +1748,7 @@ label {
   max-width: calc(100vw - 40px);
   max-height: calc(100vh - 64px);
   background: var(--surface);
-  border: 1px solid var(--control-border);
+  border: 1px solid var(--border);
   color: var(--text);
   border-radius: var(--radius-dialog);
   padding: 0;
@@ -1833,7 +1853,7 @@ label {
 }
 .inputgroup:has(input:focus-visible) {
   outline: 2px solid var(--focus);
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
 .inputgroup input:focus-visible {
   outline: 0;
@@ -1863,9 +1883,7 @@ label {
 .entrytabs button[aria-pressed="true"] {
   background: var(--surface);
   color: var(--text);
-  box-shadow:
-    var(--shadow-inset-control),
-    inset 0 0 0 1px var(--border);
+  box-shadow: var(--shadow-inset-control);
 }
 .addressfields {
   display: grid;
@@ -1949,7 +1967,7 @@ label {
   inset: auto;
   margin: 0;
   padding: 5px;
-  border: 1px solid var(--control-border);
+  border: 1px solid var(--border);
   background: var(--surface);
   color: var(--text);
   border-radius: var(--radius-panel);
@@ -2000,8 +2018,7 @@ label {
 }
 .selectoption.activeoption {
   background: var(--hover);
-  outline: 2px solid var(--focus);
-  outline-offset: -2px;
+  box-shadow: inset 2px 0 var(--focus);
 }
 .selectoption[aria-selected="true"].activeoption {
   background: var(--selected-hover);
@@ -2156,15 +2173,14 @@ label {
   margin: 0;
   padding: 14px;
   min-width: 0;
-  border: 1px solid var(--control-border);
+  border: 1px solid transparent;
   border-radius: 7px;
-  background: var(--control-bg);
+  background: transparent;
   position: relative;
   cursor: pointer;
 }
 .modecard.selected {
-  border-color: var(--text);
-  box-shadow: inset 0 0 0 0.5px var(--text);
+  background: var(--active);
 }
 .modecard:has(input:not(:disabled):not([aria-disabled="true"])):hover {
   background: var(--hover);
@@ -2178,7 +2194,7 @@ label {
 }
 .modecard:has(input:focus-visible) {
   outline: 2px solid var(--focus);
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
 .modecard input:focus-visible {
   outline: none;
@@ -2348,7 +2364,7 @@ input.switchinput:checked:not(:disabled):not([aria-disabled="true"]):active {
   padding: 20px 0;
 }
 .extensioncard.selected {
-  border-color: var(--control-border);
+  border-color: var(--border);
   background: var(--sidebar);
 }
 .selectoptions {
@@ -2385,7 +2401,7 @@ input.switchinput:checked:not(:disabled):not([aria-disabled="true"]):active {
 }
 .searchfield:has(input:focus-visible) {
   outline: 2px solid var(--focus);
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
 .searchfield input {
   border: 0;
@@ -2577,7 +2593,7 @@ input.switchinput:checked:not(:disabled):not([aria-disabled="true"]):active {
 .confirmdialog {
   background: var(--surface);
   color: var(--text);
-  border: 1px solid var(--control-border);
+  border: 1px solid var(--border);
   box-shadow: var(--dialog-shadow);
   width: 460px;
   max-width: calc(100vw - 40px);
@@ -2721,7 +2737,7 @@ button[aria-busy="true"] {
   margin: 0;
   padding: 6px 9px;
   max-width: min(280px, calc(100vw - 16px));
-  border: 1px solid var(--control-border);
+  border: 1px solid var(--border);
   border-radius: var(--radius-control);
   background: var(--text);
   color: var(--bg);
@@ -3068,9 +3084,23 @@ button[aria-busy="true"] {
     forced-color-adjust: auto;
   }
   .nav.active,
+  .modecard.selected,
   [aria-selected="true"],
   [aria-pressed="true"] {
     border: 1px solid Highlight;
+  }
+  .selectoption.activeoption {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+  .primary:focus-visible,
+  .dangerbutton:focus-visible {
+    outline-color: Highlight;
+  }
+  input.switchinput:focus-visible,
+  input.switchinput:checked:focus-visible {
+    outline-color: ButtonText;
+    outline-offset: 1px;
   }
   input.switchinput {
     forced-color-adjust: none;

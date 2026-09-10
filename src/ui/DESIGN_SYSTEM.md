@@ -59,3 +59,9 @@ Hover, held press, selection and keyboard focus are independent. Activation occu
 Combobox search keeps Home/End, modifier keys and IME editing; arrows move the active option, selection retains a checkmark and background, Escape restores the trigger. Action menus and dialogs restore persistent triggers. Button titles use hoverable, keyboard-accessible tooltips dismissed by Escape, scroll or resize. Reduced motion and forced colors are supported.
 
 `tests/ui-interactions.integration.mjs` verifies the interaction contract using hidden renderer fixtures, separate from real network acceptance.
+
+## Quiet state hierarchy
+
+Ordinary secondary actions use a soft surface and transparent border; input boundaries retain their contrast. Dialogs, menus, tooltips and noninteractive containers use the structural border token, never the input border token. Mode selection uses a background and the native radio indicator without a second inset border. Active combobox options use a background and a local inset marker; selection retains its checkmark.
+
+Visible focus is integrated into the existing edge with a negative outline offset. Filled primary/destructive actions use a contrasting inner focus color, switches adapt to their checked fill, and invalid fields keep error-colored focus and explanatory text. Composite editors show focus only for their input; separate clear/reveal buttons own their focus. No layout or target size changes on focus. Forced colors retain explicit selection/focus indicators; reduced motion remains supported. This contract targets clear keyboard operation; it is not a claim of a complete WCAG conformance audit.
