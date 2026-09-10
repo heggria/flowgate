@@ -3074,14 +3074,14 @@ button[aria-busy="true"] {
   }
   input.switchinput {
     forced-color-adjust: none;
-    background: Canvas;
+    background: Canvas !important;
     border: 1px solid ButtonText;
   }
   input.switchinput::after {
     background: ButtonText;
   }
   input.switchinput:checked {
-    background: Highlight;
+    background: Highlight !important;
   }
   input.switchinput:checked::after {
     background: HighlightText;
