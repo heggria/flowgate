@@ -47,9 +47,14 @@ test("packaging rejects missing, altered and unexpected files", async () => {
   const root = await mkdtemp(join(tmpdir(), "flowgate-inventory-"));
   try {
     await mkdir(join(root, "release"));
+    await mkdir(join(root, "assets"));
     for (const file of [
       "main.cjs",
       "preload.cjs",
+      "assets/FlowGate.icns",
+      "assets/menuBarTemplate.png",
+      "assets/menuBarTemplate@2x.png",
+      "assets/app-icon.png",
       "verification.cjs",
       "sing-box",
       "flowgate-bridge",

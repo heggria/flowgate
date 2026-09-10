@@ -1,1 +1,52 @@
-body{font:15px -apple-system,sans-serif;color:#333;background:#f6f5f0;display:grid;place-items:center;height:90vh}main{max-width:580px}button{padding:12px 18px;border:1px solid #ccc;border-radius:8px;margin:15px 10px 0 0;background:white}p{line-height:1.8;color:#777}
+:root {
+  color-scheme: light dark;
+  font:
+    14px -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
+  color: CanvasText;
+  background: Canvas;
+}
+body {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  margin: 0;
+  padding: 48px;
+  box-sizing: border-box;
+}
+body::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 38px;
+  -webkit-app-region: drag;
+}
+main {
+  max-width: 580px;
+}
+h1 {
+  font-size: 24px;
+  line-height: 1.25;
+}
+button {
+  font: inherit;
+  color: ButtonText;
+  padding: 10px 16px;
+  border: 1px solid GrayText;
+  border-radius: 7px;
+  margin: 12px 10px 0 0;
+  background: ButtonFace;
+}
+button:focus-visible {
+  outline: 2px solid Highlight;
+  outline-offset: 2px;
+}
+p {
+  line-height: 1.7;
+}
+button:disabled {
+  opacity: 0.6;
+}

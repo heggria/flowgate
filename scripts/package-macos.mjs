@@ -37,6 +37,7 @@ execFileSync("/usr/bin/ditto", [
 const contents = join(output, "Contents"),
   resources = join(contents, "Resources");
 await mkdir(join(resources, "app"), { recursive: true });
+await cp("dist/assets/FlowGate.icns", join(resources, "FlowGate.icns"));
 await cp("dist", join(resources, "app/dist"), { recursive: true });
 await verifyArtifacts(join(resources, "app/dist"));
 await cp("LICENSE", join(resources, "FlowGate-LICENSE"));
@@ -87,6 +88,7 @@ execFileSync("/usr/libexec/PlistBuddy", [
   plist,
 ]);
 for (const [key, value] of Object.entries({
+  CFBundleIconFile: "FlowGate.icns",
   CFBundleName: "FlowGate",
   CFBundleExecutable: "FlowGate",
   CFBundleDisplayName: "FlowGate",

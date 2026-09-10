@@ -20,6 +20,17 @@ if (
   throw new Error("Kernel must support arm64");
 await withBuildOutput(async (output) => {
   await mkdir(output + "/release", { recursive: true });
+  await mkdir(output + "/assets", { recursive: true });
+  await Promise.all(
+    [
+      "FlowGate.icns",
+      "app-icon.png",
+      "menuBarTemplate.png",
+      "menuBarTemplate@2x.png",
+    ].map((name) =>
+      copyFile("assets/brand/" + name, output + "/assets/" + name),
+    ),
+  );
   await build({
     entryPoints: {
       main: "src/desktop/main.ts",
