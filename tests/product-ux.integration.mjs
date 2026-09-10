@@ -244,6 +244,7 @@ try {
   const p = await surface.firstWindow();
   p.setDefaultTimeout(7000);
   p.on("pageerror", (e) => errors.push(e.message));
+  await p.getByRole("status").filter({ hasText: "正在连接服务" }).waitFor();
   await p.evaluate(() => window.uiFixture.releaseLoading());
   await p.getByRole("heading", { name: "概览", exact: true }).waitFor();
   await p.evaluate(() => {
