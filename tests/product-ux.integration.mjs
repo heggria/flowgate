@@ -122,6 +122,22 @@ try {
   await p.getByRole("button", { name: "清空节点搜索", exact: true }).click();
   const nodeGeometry = await p.locator(".node").first().boundingBox();
   assert.ok(nodeGeometry.height <= 50);
+  const columns = await p.locator(".node").evaluateAll((rows) =>
+    rows.slice(0, 2).map((row) => ({
+      delay: row.querySelector(".latencybutton").getBoundingClientRect().x,
+      selection: row
+        .querySelector(".nodeactions > .quiet")
+        .getBoundingClientRect().x,
+    })),
+  );
+  assert.ok(
+    Math.abs(columns[0].delay - columns[1].delay) <= 1,
+    "selected and unselected delay columns align",
+  );
+  assert.ok(
+    Math.abs(columns[0].selection - columns[1].selection) <= 1,
+    "selected and unselected outlet columns align",
+  );
   await p.screenshot({ path: join(output, "nodes-40.png") });
   await p.getByRole("button", { name: "切换列表密度", exact: true }).click();
   assert.ok((await p.locator(".node").first().boundingBox()).height >= 60);

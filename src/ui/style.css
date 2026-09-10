@@ -2864,6 +2864,8 @@ button[aria-busy="true"] {
 .nodeactions > .chosen,
 .nodeactions > .selectnode {
   width: 72px;
+  min-width: 72px;
+  flex: none;
 }
 /* Resource views are navigation, not form controls. */
 .resourceviews {
@@ -2930,7 +2932,6 @@ button[aria-busy="true"] {
   letter-spacing: 0.2px;
 }
 .node .selectnode {
-  width: 28px;
   height: 28px;
   padding: 0;
   display: grid;
