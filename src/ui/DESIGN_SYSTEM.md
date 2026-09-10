@@ -59,3 +59,9 @@ Hover, held press, selection and keyboard focus are independent. Activation occu
 Combobox search keeps Home/End, modifier keys and IME editing; arrows move the active option, selection retains a checkmark and background, Escape restores the trigger. Action menus and dialogs restore persistent triggers. Button titles use hoverable, keyboard-accessible tooltips dismissed by Escape, scroll or resize. Reduced motion and forced colors are supported.
 
 `tests/ui-interactions.integration.mjs` verifies the interaction contract using hidden renderer fixtures, separate from real network acceptance.
+
+## Task-first surfaces
+
+Keep page copy short. Use `InfoTip` only for consequential limitations or ambiguous behavior, never on every label. Overview has one current-outlet hero and a focused switch/apply dialog. Saved changes remain distinct from the running outlet; measurements are invalidated when that connection changes. Resource views use underline tabs, compact filters and opt-in bulk selection. Rule priority remains its true configuration position when filtered; secondary actions live in one row menu. Details and route previews open on demand. Connection details use a bounded modal drawer with focus and table-scroll restoration.
+
+`tests/product-ux.integration.mjs` covers saved versus applied state, node filters, rule priority/undo, route preview, cross-page drafts, command search and contextual help. Its separate 200-flow presentation fixture verifies drawer scrolling and focus; real forwarding is checked independently.

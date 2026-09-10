@@ -1,4 +1,9 @@
 const paths: Record<string, string> = {
+  copy: "M8 8h12v13H8z M16 8V3H3v13h5",
+  density: "M4 5h16 M4 10h16 M4 15h16 M4 20h16",
+  check: "M5 12l4 4L19 6",
+  circle: "M20 12a8 8 0 1 1-16 0 8 8 0 0 1 16 0",
+  info: "M12 11v6 M12 7h.01 M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0",
   overview: "M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z",
   connections: "M2 12h4l3-8 6 16 3-8h4",
   nodes: "M4 5h16v5H4z M4 14h16v5H4z M7 7.5h.01 M7 16.5h.01",
@@ -7,7 +12,8 @@ const paths: Record<string, string> = {
     "M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0 M3 12h18 M12 3c5 5 5 13 0 18-5-5-5-13 0-18",
   activity: "M8 3H4v18h16V3h-4 M8 2h8v4H8z M8 11h8 M8 16h6",
   settings: "M4 7h16 M4 17h16 M9 4v6 M15 14v6",
-  extensions: "M9 3H3v6h3a3 3 0 0 1 0 6H3v6h6v-3a3 3 0 0 1 6 0v3h6v-6h-3a3 3 0 0 1 0-6h3V3h-6v3a3 3 0 0 1-6 0z",
+  extensions:
+    "M9 3H3v6h3a3 3 0 0 1 0 6H3v6h6v-3a3 3 0 0 1 6 0v3h6v-6h-3a3 3 0 0 1 0-6h3V3h-6v3a3 3 0 0 1-6 0z",
   search: "M16 16l5 5 M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0",
   refresh: "M20 7V2 M20 7h-5 M20 7a9 9 0 1 0 1 8",
   power: "M12 2v10 M6 5a9 9 0 1 0 12 0",

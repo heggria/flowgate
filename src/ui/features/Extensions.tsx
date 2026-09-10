@@ -4,7 +4,6 @@ import {
   PageHeader,
   SearchField,
   EmptyState,
-  StatusBadge,
   Disclosure,
   TaskError,
 } from "../components";
@@ -14,7 +13,6 @@ import { client } from "../../../packages/client/src/index";
 import type { ExtensionState } from "../../../packages/contracts/src/extensions";
 import type { TraceContext } from "../../../packages/contracts/src/index";
 import type { FeatureProps } from "../modules";
-import { ReleaseUpdates } from "./ReleaseUpdates";
 
 const labels: Record<ExtensionState["status"], string> = {
   ready: "运行中",
@@ -39,11 +37,10 @@ type Event = {
   status: string;
   context: Partial<TraceContext>;
 };
-export function Extensions({ snapshot, run, busy }: FeatureProps) {
+export function Extensions({ snapshot, run, busy, navigate }: FeatureProps) {
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState("");
   const [showCore, setShowCore] = useState(false);
-  const [showUpdates, setShowUpdates] = useState(false);
   const [pending, setPending] = useState("");
   const operation = useRef(false);
   const [feedback, setFeedback] = useState<Record<string, string>>({});
@@ -192,21 +189,11 @@ export function Extensions({ snapshot, run, busy }: FeatureProps) {
   };
   return (
     <div className="extensionspage">
-      <PageHeader
-        title="扩展"
-        description="按需开启附加能力，让 FlowGate 更适合你。"
-      >
-        <Button
-          className="secondary"
-          aria-expanded={showUpdates}
-          onClick={() => setShowUpdates((value) => !value)}
-        >
+      <PageHeader title="扩展">
+        <Button className="secondary" onClick={() => navigate("updates")}>
           管理更新
         </Button>
       </PageHeader>
-      {showUpdates ? (
-        <ReleaseUpdates run={run} busy={busy} extensions={entries} />
-      ) : null}
       {entries.length >= 10 ? (
         <div className="tabletools extensionfilters">
           <SearchField

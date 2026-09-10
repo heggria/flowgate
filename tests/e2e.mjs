@@ -49,9 +49,14 @@ try {
   await page.getByRole("dialog").waitFor({ state: "hidden" });
   await page.getByText("example.com", { exact: true }).waitFor();
 
+  await page.getByRole("button", { name: "检查路径", exact: true }).click();
   await page.getByRole("textbox", { name: "目标域名" }).fill("www.example.com");
-  await page.getByRole("button", { name: "检查路径" }).click();
-  await page.getByRole("status").filter({ hasText: "direct" }).waitFor();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "检查路径" })
+    .click();
+  await page.getByRole("status").filter({ hasText: "直连" }).waitFor();
+  await page.keyboard.press("Escape");
   await page.getByRole("button", { name: "概览", exact: true }).click();
   await page.getByRole("button", { name: "启动代理", exact: true }).click();
   await page.getByRole("button", { name: "停止代理", exact: true }).waitFor();

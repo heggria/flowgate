@@ -20,10 +20,7 @@ try {
   await isolateProxyPort(p);
   await p.screenshot({ path: "work/journey-overview-light.png" });
   await p.getByRole("button", { name: "添加第一个节点" }).click();
-  assert.equal(
-    await p.evaluate(() => document.activeElement?.textContent),
-    "节点与订阅",
-  );
+  await p.getByRole("dialog").waitFor();
   const input = await openNodeImport(p);
   await input.fill(
     JSON.stringify({
@@ -85,22 +82,14 @@ try {
   await p.getByRole("textbox", { name: "匹配内容" }).fill("second.example");
   await p.getByRole("button", { name: "添加规则", exact: true }).click();
   await p.getByText("second.example", { exact: true }).waitFor();
-  await p
-    .getByRole("button", { name: "上移规则 second.example", exact: true })
-    .click();
-  await p
-    .getByRole("button", { name: "上移规则 second.example", exact: true })
-    .isDisabled();
-  // Snapshot is the service authority; after the mutation busy guard releases, the button reflects persisted order.
-  for (let n = 0; n < 50; n++) {
-    if (
-      await p
-        .getByRole("button", { name: "上移规则 second.example", exact: true })
-        .isDisabled()
-    )
-      break;
-    await p.waitForTimeout(100);
-  }
+  await p.getByLabel("管理规则 second.example").click();
+  await p.getByRole("button", { name: "上移", exact: true }).click();
+  await p.getByLabel("管理规则 second.example").click();
+  assert.equal(
+    await p.getByRole("button", { name: "上移", exact: true }).isDisabled(),
+    true,
+  );
+  await p.keyboard.press("Escape");
   assert.equal(
     (await p.evaluate(() => window.flowgate.request("snapshot"))).configuration
       .rules[0].value,

@@ -1,5 +1,5 @@
-import { Toggle, Button, Disclosure } from "../components";
-import { useState } from "react";
+import { Toggle, Button, InfoTip } from "../components";
+import { useEffect, useState } from "react";
 import { useDraft } from "../drafts";
 import { ReleaseUpdates } from "./ReleaseUpdates";
 import { PageHeader, SettingRow, TaskError, useTask } from "../components";
@@ -9,12 +9,26 @@ export function Settings({
   save,
   run,
   busy = false,
+  systemControl = false,
 }: {
   config: Configuration;
+  systemControl?: boolean;
   busy?: boolean;
   save: (c: Configuration, options?: { local?: boolean }) => Promise<boolean>;
   run: (fn: () => Promise<unknown>) => Promise<void>;
 }) {
+  useEffect(() => {
+    if (sessionStorage.getItem("flowgate.showUpdates") === "1") {
+      sessionStorage.removeItem("flowgate.showUpdates");
+      const section = document.getElementById("about-updates");
+      section?.scrollIntoView({ block: "start" });
+      const heading = section?.querySelector("h2");
+      if (heading) {
+        heading.tabIndex = -1;
+        heading.focus({ preventScroll: true });
+      }
+    }
+  }, []);
   const draft = useDraft("settings", {
     dns: config.settings.dnsServer,
     port: String(config.settings.listenPort),
@@ -32,11 +46,16 @@ export function Settings({
   ];
   return (
     <div className="settingspage">
-      <PageHeader title="设置" description="让 FlowGate 按你的方式工作。" />
+      <PageHeader title="设置" />
       <section className="settingsgroup">
         <div className="groupheading">
-          <h2>网络接入</h2>
-          <p>选择流量接入方式与本地监听地址。</p>
+          <div className="headinglabel">
+            <h2>网络接入</h2>
+            <InfoTip label="设置保存说明">
+              模式与开关即时保存；端口和 DNS
+              先保存草稿。已保存配置在下次启动或点击应用配置后生效。
+            </InfoTip>
+          </div>
         </div>
         <div className="modecards" role="radiogroup" aria-label="接入方式">
           {modes.map((mode) => (
@@ -50,6 +69,7 @@ export function Settings({
             >
               <Toggle
                 type="radio"
+                disabled={mode.id !== "manual" && !systemControl}
                 pending={busy || task.pending}
                 name="connection-mode"
                 value={mode.id}
@@ -65,19 +85,23 @@ export function Settings({
                 }}
               />
               <strong>{mode.name}</strong>
-              <span>{mode.description}</span>
             </label>
           ))}
         </div>
-        <p className="fieldhint modehint">
-          {config.settings.mode === "manual"
-            ? `在目标应用中填写 127.0.0.1:${config.settings.listenPort}，支持 HTTP 与 SOCKS。`
-            : "此模式需要已安装且可用的系统辅助服务。"}
-        </p>
+        {!systemControl ? (
+          <div className="sectionactions">
+            <Button
+              className="quiet"
+              onClick={() => run(() => window.shell.request("helper.install"))}
+            >
+              安装系统辅助服务
+            </Button>
+          </div>
+        ) : null}
         <div className="settingssurface">
           <SettingRow
             label="启动时恢复代理连接"
-            description="使用上一次保存的配置，自动开始连接。"
+
             htmlFor="auto-connect"
           >
             <Toggle
@@ -122,7 +146,7 @@ export function Settings({
           >
             <SettingRow
               label="本地端口"
-              description="HTTP 与 SOCKS 共享一个监听端口。"
+
               htmlFor="listen-port"
             >
               <input
@@ -142,7 +166,7 @@ export function Settings({
             </SettingRow>
             <SettingRow
               label="DNS 服务器"
-              description="用于默认出口的域名解析。"
+
               htmlFor="dns-server"
             >
               <input
@@ -189,21 +213,8 @@ export function Settings({
             ) : null}
           </form>
         </div>
-        <Disclosure title="系统辅助服务">
-          <SettingRow
-            label="安装系统辅助服务"
-            description="为系统代理和 TUN 模式提供所需的权限。"
-          >
-            <Button
-              className="secondary"
-              onClick={() => run(() => window.shell.request("helper.install"))}
-            >
-              安装系统辅助服务
-            </Button>
-          </SettingRow>
-        </Disclosure>
       </section>
-      <div className="settingsupdates">
+      <div className="settingsupdates" id="about-updates">
         <ReleaseUpdates run={run} busy={busy || task.pending} />
       </div>
     </div>

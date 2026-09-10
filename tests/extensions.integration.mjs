@@ -306,6 +306,10 @@ try {
       throw new Error("测试：状态已更新，请重新尝试");
     });
   });
+  await page
+    .getByRole("navigation")
+    .getByRole("button", { name: "扩展", exact: true })
+    .click();
   const toggle = row.getByRole("switch");
   await toggle.focus();
   await page.keyboard.press("Space");

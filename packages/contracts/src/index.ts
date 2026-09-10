@@ -197,7 +197,18 @@ export interface TrafficSnapshot {
   download: number;
   flows: FlowRecord[];
 }
+export interface AppliedConnection {
+  revision: number;
+  operationId: string;
+  selectedNode: string;
+  outletName: string;
+  mode: Settings["mode"];
+  listenPort: number;
+  finalOutbound: string;
+  ruleCount: number;
+}
 export interface AppSnapshot {
+  appliedConnection?: AppliedConnection;
   extensionRevision?: number;
   extensions?: import("./extensions").ExtensionState[];
   protocol: 1;
