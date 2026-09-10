@@ -48,10 +48,19 @@ final class MacProxyTransaction: ProxyTransaction {
     func unlock() { SCPreferencesUnlock(prefs) }
     func services() throws -> [String] {
         guard let values = SCNetworkServiceCopyAll(prefs) as? [SCNetworkService] else { throw NSError(domain: "无可用网络服务", code: 16) }
-        return values.compactMap { service in
+        let ids = values.compactMap { service -> String? in
             guard SCNetworkServiceGetEnabled(service), SCNetworkServiceCopyProtocol(service, kSCNetworkProtocolTypeProxies) != nil, let id = SCNetworkServiceGetServiceID(service) else { return nil }
             return id as String
         }
+        // Network Extension VPNs can publish a transient primary service which
+        // is absent from SCPreferences. Changing Wi-Fi then has no global effect.
+        // Do not report success or overwrite another provider's dynamic state.
+        if let store = SCDynamicStoreCreate(nil, "FlowGate" as CFString, nil, nil),
+           let global = SCDynamicStoreCopyValue(store, "State:/Network/Global/IPv4" as CFString) as? [String: Any],
+           let primary = global["PrimaryService"] as? String, !ids.contains(primary) {
+            throw NSError(domain: "当前 VPN 接管默认网络，系统代理无法全局生效；请先断开 VPN，或使用手动代理模式", code: 39)
+        }
+        return ids
     }
     func read(_ id: String) throws -> [String: Any] {
         guard let service = SCNetworkServiceCopy(prefs, id as CFString), let proto = SCNetworkServiceCopyProtocol(service, kSCNetworkProtocolTypeProxies) else { throw NSError(domain: "网络服务已不可用", code: 13) }

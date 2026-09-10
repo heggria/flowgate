@@ -10,10 +10,20 @@ import Darwin
         var connection: NSXPCConnection?
         var helperEstablished = false
         func helperRequest(_ data: Data) -> Data? {
-            guard let team = signingTeam() else { return nil }
+            guard ProcessInfo.processInfo.environment["FLOWGATE_DISABLE_SYSTEM_HELPER"] != "1" else { return nil }
+            let service: String
+            let requirement: String
+            if FileManager.default.fileExists(atPath: localTools.path) {
+                guard let trust = try? LocalTrust.load(), trust.uid == getuid(),
+                      (try? codeHash(CommandLine.arguments[0])) == trust.bridge else { return nil }
+                service = localService; requirement = hashRequirement(trust.helper)
+            } else if let team = signingTeam() {
+                service = "com.flowgate.helper"
+                requirement = signingRequirement(identifier: "com.flowgate.helper", team: team)
+            } else { return nil }
             if connection == nil {
-                let client = NSXPCConnection(machServiceName: "com.flowgate.helper", options: .privileged)
-                client.setCodeSigningRequirement(signingRequirement(identifier: "com.flowgate.helper", team: team))
+                let client = NSXPCConnection(machServiceName: service, options: .privileged)
+                client.setCodeSigningRequirement(requirement)
                 client.remoteObjectInterface = NSXPCInterface(with: FlowGateHelperProtocol.self)
                 client.resume(); connection = client
             }
@@ -30,7 +40,12 @@ import Darwin
             var response: Data
             let request = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
             let method = request?["method"] as? String
-            if method == "helper.install" {
+            if method == "helper.info" {
+                response = try JSONSerialization.data(withJSONObject: ["id": request?["id"] ?? "", "result": localInstallationInfo()])
+            } else if method == "helper.reset" {
+                connection?.invalidate(); connection = nil; helperEstablished = false
+                response = try JSONSerialization.data(withJSONObject: ["id": request?["id"] ?? "", "result": engine.state()])
+            } else if method == "helper.install" {
                 do { try SMAppService.daemon(plistName: "com.flowgate.helper.plist").register(); response = try JSONSerialization.data(withJSONObject: ["id": request?["id"] ?? "", "result": engine.state()]) }
                 catch { response = try! JSONSerialization.data(withJSONObject: ["id": request?["id"] ?? "", "error": "辅助服务注册需要已签名应用及系统设置批准：\(error.localizedDescription)"]) }
             } else if let remote = helperRequest(data) { helperEstablished = true; response = remote }

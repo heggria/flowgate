@@ -1,3 +1,4 @@
+import { manageLocalHelper } from "../../packages/shell/src/local-helper";
 import {
   readAppearance,
   setAppearance,
@@ -83,6 +84,7 @@ async function startGateway(directory: string, manifest?: ReleaseSet) {
     throw error;
   }
 }
+let helperMaintenance = false;
 let updating = false,
   suspended = false,
   quitting = false,
@@ -193,6 +195,8 @@ function attachCapabilities(host: ProcessSupervisor, readonly = false) {
     if (method === "native.status") return native.status();
     if (method === "native.control") return native.control();
     if (readonly) throw new Error("预检禁止写入和扩展操作");
+    if (method === "native.apply" && helperMaintenance)
+      throw new Error("辅助服务正在维护，请稍后连接");
     if (method === "native.apply")
       return native.apply(
         payload.config,
@@ -398,6 +402,7 @@ else {
         join(__dirname, "flowgate-bridge"),
         join(__dirname, "sing-box"),
         join(data, "native"),
+        !process.env.FLOWGATE_TEST_DATA,
       );
       await native.start();
       // This file is bundled in the signed shell, never loaded from userData.
@@ -749,7 +754,35 @@ else {
           gatewayEnabled = false;
           return { stopped: true };
         }
-        if (input.method === "helper.install") return native.installHelper();
+        if (input.method === "helper.info") return native.helperInfo();
+        if (
+          input.method === "helper.install" ||
+          input.method === "helper.uninstall"
+        ) {
+          if (process.env.FLOWGATE_TEST_DATA)
+            throw new Error("隔离测试不能安装系统辅助服务");
+          if (helperMaintenance || updating || quitting)
+            throw new Error("辅助服务或应用正在维护，请稍后重试");
+          helperMaintenance = true;
+          try {
+            const before = await native.status();
+            if (before.status !== "stopped")
+              throw new Error("请先断开代理连接，再安装或卸载辅助服务");
+            await manageLocalHelper(
+              __dirname,
+              input.method === "helper.install" ? "install" : "uninstall",
+            );
+            await native.resetHelper();
+            const after = await native.status();
+            if (input.method === "helper.install" && !after.systemControl)
+              throw new Error(
+                "辅助服务已安装，但连接尚未成功；请检查系统后台项目权限后重试",
+              );
+            return native.helperInfo();
+          } finally {
+            helperMaintenance = false;
+          }
+        }
         if (input.method === "application.check")
           return applicationUpdate.check();
         if (input.method === "diagnostics.trace")

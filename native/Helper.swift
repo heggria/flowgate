@@ -40,11 +40,13 @@ final class HelperSession: NSObject, FlowGateHelperProtocol {
 }
 final class HelperDelegate: NSObject, NSXPCListenerDelegate {
     let engine: NetworkEngine
+    var permittedUID: UInt32?
     var active: NSXPCConnection?
     let lease = SessionLease()
     let queue=DispatchQueue(label:"com.flowgate.helper.writer")
     init(engine: NetworkEngine) { self.engine = engine }
     func listener(_ listener: NSXPCListener, shouldAcceptNewConnection connection: NSXPCConnection) -> Bool {
+        if let uid = permittedUID, connection.effectiveUserIdentifier != uid { return false }
         let session: HelperSession? = queue.sync {
             guard active == nil, let generation = lease.acquire() else { return nil }
             active = connection
@@ -64,6 +66,23 @@ final class HelperDelegate: NSObject, NSXPCListenerDelegate {
         if runKernelWatchdogIfRequested() { return }
         guard geteuid() == 0 else { exit(77) }
         let executable = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+        if CommandLine.arguments.count == 2, ["--local", "--local-recover"].contains(CommandLine.arguments[1]) {
+            let trust = try LocalTrust.load()
+            guard try codeHash(executable.path) == trust.helper else { exit(78) }
+            let kernel = localTools.appendingPathComponent("sing-box")
+            try rootOwned(kernel.path)
+            guard try codeHash(kernel.path) == trust.kernel else { exit(78) }
+            if FileManager.default.fileExists(atPath: localData.path) { try rootOwned(localData.path, directory: true) }
+            else { try FileManager.default.createDirectory(at: localData, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]) }
+            let engine = try NetworkEngine(kernelPath: kernel.path, directory: localData, privileged: true)
+            if CommandLine.arguments[1] == "--local-recover" { try engine.stop(); return }
+            let delegate = HelperDelegate(engine: engine); delegate.permittedUID = trust.uid
+            let listener = NSXPCListener(machServiceName: localService)
+            listener.setConnectionCodeSigningRequirement(hashRequirement(trust.bridge))
+            listener.delegate = delegate; listener.resume()
+            withExtendedLifetime(delegate) { RunLoop.current.run() }
+            return
+        }
         let bundledKernel = executable.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Resources/app/dist/sing-box")
         guard let team = signingTeam() else { exit(78) }
         let directory=URL(fileURLWithPath:"/Library/Application Support/FlowGate",isDirectory:true)

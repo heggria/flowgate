@@ -1,5 +1,5 @@
 import { Toggle, Button, Disclosure } from "../components";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useDraft } from "../drafts";
 import { ReleaseUpdates } from "./ReleaseUpdates";
 import { PageHeader, SettingRow, TaskError, useTask } from "../components";
@@ -22,6 +22,40 @@ export function Settings({
   const { dns, port } = draft.value,
     task = useTask(),
     [notice, setNotice] = useState("");
+  const [helper, setHelper] = useState<{
+    installed: boolean;
+    compatible: boolean;
+    message: string;
+  }>();
+  const [helperBusy, setHelperBusy] = useState(false);
+  useEffect(() => {
+    let active = true;
+    window.shell
+      .request("helper.info")
+      .then((value) => {
+        if (active) setHelper(value as typeof helper);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
+  async function helperAction(method: "helper.install" | "helper.uninstall") {
+    setHelperBusy(true);
+    try {
+      await run(async () => {
+        try {
+          await window.shell.request(method);
+        } finally {
+          setHelper(
+            (await window.shell.request("helper.info")) as typeof helper,
+          );
+        }
+      });
+    } finally {
+      setHelperBusy(false);
+    }
+  }
   const dirty =
     dns !== config.settings.dnsServer ||
     port !== String(config.settings.listenPort);
@@ -192,15 +226,36 @@ export function Settings({
         <Disclosure title="系统辅助服务">
           <SettingRow
             label="安装系统辅助服务"
-            description="为系统代理和 TUN 模式提供所需的权限。"
+            description={
+              helper?.message ?? "免费本机使用，无需 Apple 开发者会员。"
+            }
           >
             <Button
               className="secondary"
-              onClick={() => run(() => window.shell.request("helper.install"))}
+              disabled={busy || helperBusy}
+              onClick={() => void helperAction("helper.install")}
             >
-              安装系统辅助服务
+              {helperBusy
+                ? "处理中…"
+                : helper?.installed
+                  ? "更新辅助服务"
+                  : "安装系统辅助服务"}
             </Button>
           </SettingRow>
+          {helper?.installed && (
+            <SettingRow
+              label="卸载辅助服务"
+              description="先断开连接。卸载会恢复本应用拥有的网络设置；手动代理仍可使用。"
+            >
+              <Button
+                className="secondary"
+                disabled={busy || helperBusy}
+                onClick={() => void helperAction("helper.uninstall")}
+              >
+                卸载辅助服务
+              </Button>
+            </SettingRow>
+          )}
         </Disclosure>
       </section>
       <div className="settingsupdates">

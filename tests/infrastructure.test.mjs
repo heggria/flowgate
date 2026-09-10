@@ -59,6 +59,7 @@ test("packaging rejects missing, altered and unexpected files", async () => {
       "sing-box",
       "flowgate-bridge",
       "flowgate-helper",
+      "flowgate-local-installer",
       "release/index.html",
       "release/service.cjs",
     ])

@@ -64,13 +64,18 @@ final class NetworkEngine {
         let inbound = inbounds[0]
         if mode == "tun" { guard privileged, inbound["type"] as? String == "tun" else { throw NSError(domain: "TUN 需要特权辅助服务", code: 21) } }
         else { guard inbound["type"] as? String == "mixed", inbound["listen"] as? String == "127.0.0.1", let port = inbound["listen_port"] as? Int, (1024...65535).contains(port) else { throw NSError(domain: "只能监听本机非特权端口", code: 22) } }
-        func checkKeys(_ object: Any) throws {
+        func checkKeys(_ object: Any, context: String = "") throws {
             if let map = object as? [String: Any] {
                 for (key, value) in map {
                     if key.hasSuffix("_path") || ["output", "cache_file", "execute", "script", "certificate_provider"].contains(key) { throw NSError(domain: "配置包含禁止的文件或执行能力", code: 23) }
-                    try checkKeys(value)
+                    if key == "path" {
+                        let transportURL = context.hasSuffix(".transport") && ["ws", "http", "httpupgrade"].contains(map["type"] as? String ?? "")
+                        let dnsURL = context == "dns.servers[]" && map["type"] as? String == "https"
+                        guard transportURL || dnsURL else { throw NSError(domain: "配置不允许读取本机文件", code: 23) }
+                    }
+                    try checkKeys(value, context: context.isEmpty ? key : context + "." + key)
                 }
-            } else if let array = object as? [Any] { for value in array { try checkKeys(value) } }
+            } else if let array = object as? [Any] { for value in array { try checkKeys(value, context: context + "[]") } }
         }
         try checkKeys(config)
     }
