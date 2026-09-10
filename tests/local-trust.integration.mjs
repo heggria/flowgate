@@ -33,6 +33,14 @@ try {
   rejected = false
   do { try engine.validate(config, mode: "manual") } catch { rejected = true }
   precondition(rejected, "privileged configuration cannot read arbitrary files")
+  var proxies: [String: Any] = [:]
+  for prefix in ["HTTP", "HTTPS", "SOCKS"] { proxies[prefix + "Enable"] = 1; proxies[prefix + "Proxy"] = "127.0.0.1"; proxies[prefix + "Port"] = 18989 }
+  precondition(effectiveProxyMatches(proxies, port: 18989))
+  precondition(!effectiveProxyMatches([:], port: 18989), "stored preferences are not proof of effective proxy")
+  proxies["HTTPSPort"] = 12345
+  precondition(!effectiveProxyMatches(proxies, port: 18989), "foreign endpoint cannot be reported owned")
+  proxies["HTTPSPort"] = 18989; proxies["ProxyAutoConfigEnable"] = 1
+  precondition(!effectiveProxyMatches(proxies, port: 18989), "PAC overrides cannot be reported owned")
   print("trust checks passed")
  }
 }`,

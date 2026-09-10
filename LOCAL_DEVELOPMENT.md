@@ -13,7 +13,7 @@ The approved bridge code hash is tied to this build and user. After rebuilding n
 ## Modes and coexistence
 
 - Manual: configure the consuming app with FlowGate's HTTP/SOCKS address. It works without installing the helper.
-- System: changes supported macOS network-service proxy settings. Applications must honor system proxy settings. An active VPN with a transient primary service can override those settings; FlowGate rejects that situation instead of claiming global success. Disconnect that VPN to use independent system proxy mode, or use manual proxy for coexistence.
+- System: changes supported macOS network-service proxy settings. Applications must honor system proxy settings. An active VPN with a virtual primary interface can override those settings; FlowGate rejects that situation instead of claiming global success. Disconnect that VPN to use independent system proxy mode, or use manual proxy for coexistence. Successful system-proxy application also requires the effective global HTTP/HTTPS/SOCKS settings to match; otherwise the operation restores its owned changes.
 - TUN: creates a dedicated virtual interface and routes packets through sing-box. The native engine chooses an unused interface. Existing VPNs and default routes can affect behavior; validate the desired combination with actual traffic.
 
 Stopping restores only the settings still owned by FlowGate. A client disconnect releases the helper lease. A separate watchdog recovers owned settings and kernel processes when the helper crashes. Tests using `FLOWGATE_TEST_DATA` cannot install system helpers and never connect to them; standalone `NativeSession` also disables system helpers by default.
