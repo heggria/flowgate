@@ -34,6 +34,11 @@ assert.equal(
     .digest("hex"),
   build.files["main.cjs"].sha256,
 );
+assert.equal(field("CFBundleIconFile"), "FlowGate.icns");
+assert.deepEqual(
+  await readFile(join(bundle, "Contents/Resources/FlowGate.icns")),
+  await readFile(join(resource, "dist/assets/FlowGate.icns")),
+);
 execFileSync("/usr/bin/codesign", ["--verify", "--deep", "--strict", bundle]);
 await mkdir("work", { recursive: true });
 const origin = createServer((_req, res) => res.end("packaged-flowgate"));
@@ -92,6 +97,7 @@ try {
         checks: [
           "packaged version identity",
           "codesign integrity",
+          "own application icon matches verified build",
           "built shell digest",
           "hidden packaged window",
           "real proxy forwarding from packaged executable",

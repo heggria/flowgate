@@ -1,3 +1,8 @@
+import {
+  readAppearance,
+  setAppearance,
+} from "../../packages/shell/src/appearance";
+import { installApplicationMenu } from "../../packages/shell/src/application-menu";
 import { DiagnosticTrace } from "../../packages/shell/src/diagnostic-trace";
 import { cleanupStages } from "../../packages/shell/src/cleanup";
 import { deepLinkRoute } from "../../packages/shell/src/deep-link";
@@ -287,13 +292,52 @@ async function stopHosts() {
 }
 
 let pendingNavigation: string | undefined;
+let menuProxyInFlight = false;
+function proxyFromMenu(connect: boolean) {
+  if (menuProxyInFlight || updating || quitting || (connect && suspended))
+    return;
+  const useService = service && !shell.recovering && !suspended;
+  if (connect && !useService) {
+    shell.open();
+    return;
+  }
+  menuProxyInFlight = true;
+  void (async () => {
+    if (useService)
+      await service!.call(
+        connect ? "proxy.connect" : "proxy.disconnect",
+        {},
+        randomUUID(),
+      );
+    else await native?.stop("tray-disconnect");
+    await publish();
+  })()
+    .catch(async (error) => {
+      if (!useService) {
+        recover(error);
+        return;
+      }
+      // Ordinary operation failures remain in Service history, not shell recovery.
+      await publish().catch(recover);
+      navigateRoute("activity");
+    })
+    .finally(() => {
+      menuProxyInFlight = false;
+    });
+}
 function navigateLink(input: string) {
   const route = deepLinkRoute(input);
-  if (!route) return;
+  if (route) navigateRoute(route);
+}
+function navigateRoute(route: string) {
+  if (quitting) return;
   pendingNavigation = route;
   if (shell) {
     shell.open();
-    shell.window?.webContents.send("shell:navigate", route);
+    if (shell.ready && !shell.recovering) {
+      shell.window?.webContents.send("shell:navigate", route);
+      pendingNavigation = undefined;
+    }
   }
 }
 app.on("open-url", (event, url) => {
@@ -323,9 +367,9 @@ else {
         join(currentDirectory, "index.html"),
         {
           quit: () => app.quit(),
-          disconnect: () => {
-            void native?.stop("tray-disconnect").then(publish).catch(recover);
-          },
+          navigate: navigateRoute,
+          connect: () => proxyFromMenu(true),
+          disconnect: () => proxyFromMenu(false),
           rendererFault: () =>
             new Promise<boolean>((resolve) => {
               faultQueue = faultQueue
@@ -347,6 +391,7 @@ else {
             }),
         },
       );
+      installApplicationMenu(__dirname, navigateRoute);
       shell.installTray();
       app.on("activate", () => shell.open());
       native = new NativeSession(
@@ -548,6 +593,9 @@ else {
       });
       ipcMain.handle("shell:request", async (event, input) => {
         shell.authorize(event);
+        if (input?.method === "appearance.get") return readAppearance();
+        if (input?.method === "appearance.set")
+          return setAppearance(input.payload?.source);
         if (input?.method === "ui.context")
           return {
             ...shell.uiIdentity,
@@ -863,6 +911,7 @@ else {
         recover(error);
         return;
       }
+      shell?.dispose();
       app.quit();
     })();
   });

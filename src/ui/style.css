@@ -90,6 +90,29 @@
   --dialog-shadow: 0 24px 80px #0008, 0 0 0 1px #ffffff08;
   --danger-solid: #b94047;
 }
+:root[data-high-contrast="true"] {
+  --border: #77777e;
+  --control-border: #56565f;
+  --muted: #424248;
+  --faint: #49494f;
+  --focus: #222226;
+}
+:root[data-high-contrast="true"][data-theme="dark"] {
+  --border: #a3a3ad;
+  --control-border: #bebec8;
+  --muted: #dddde2;
+  --faint: #d6d6dc;
+  --focus: #fff;
+}
+:root[data-high-contrast="true"] .secondary:not(:disabled),
+:root[data-high-contrast="true"] .iconbutton:not(:disabled) {
+  border-color: var(--control-border);
+}
+:root[data-reduced-transparency="true"] .taskdialog::backdrop,
+:root[data-reduced-transparency="true"] .confirmdialog::backdrop {
+  backdrop-filter: none;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -986,8 +1009,8 @@ body {
 .brandmark {
   display: grid;
   place-items: center;
-  background: var(--text);
-  color: var(--surface);
+  background: #173139;
+  color: #b0f2df;
   width: 25px;
   height: 25px;
   border-radius: 7px;

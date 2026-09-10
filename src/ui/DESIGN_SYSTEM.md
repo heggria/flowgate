@@ -73,3 +73,9 @@ Choice popovers match both edges of their trigger. Action menus align to the tri
 Menu outer padding is 6 px; search leading icons, group labels and option labels share an 8 px inner inset. Search icons do not shrink and are vertically centered in a 36 px row. Resource rows use a shared 10 px inset and 32 px icon column. Source errors cannot vertically recenter the leading icon or actions. Stacked metric rows share column origins. Dashboard grids own their gaps rather than combining a gap with child margins. All settings contributions share the same 780 px maximum width. Switches reset native margins. Banners use the page gutter at every breakpoint.
 
 `tests/ui-spacing.integration.mjs` adds numeric alignment checks across all eight pages, both themes, seven actual CSS viewports, choice and action popovers, and task dialogs. A page fitting its viewport does not by itself establish correct spacing.
+
+## Application identity and platform appearance
+
+The gateway/streams mark in `assets/brand/mark.json` is shared by the native icon and sidebar. Primary navigation symbols use a common 24-unit grid and 1.75-unit stroke with rounded caps. Brand color is confined to the identity mark; application status remains explicit text with the existing semantic colors.
+
+Fresh installations follow native system appearance; native View → Appearance exposes system/light/dark. An explicit renderer toggle overrides the system preference. High contrast strengthens shared text/border tokens, and reduced transparency disables backdrop blur. Native menu/keyboard/window conventions and actual macOS 27 qualification limits are documented in [MACOS.md](../../MACOS.md).

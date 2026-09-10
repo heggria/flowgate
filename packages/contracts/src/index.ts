@@ -233,7 +233,16 @@ export interface FlowGateClient {
   ): Promise<T>;
   subscribe(listener: (snapshot: AppSnapshot) => void): () => void;
 }
+export type AppearanceSource = "system" | "light" | "dark";
+export interface NativeAppearance {
+  source: AppearanceSource;
+  dark: boolean;
+  highContrast: boolean;
+  reducedTransparency: boolean;
+  differentiateWithoutColor: boolean;
+}
 export interface ShellPort {
+  onAppearance?: (listener: (value: NativeAppearance) => void) => () => void;
   setReleaseHandler?: (handler: () => Promise<void>) => () => void;
   prepareRelease?: () => Promise<void>;
   onNavigate?: (listener: (route: string) => void) => () => void;
@@ -241,6 +250,8 @@ export interface ShellPort {
   platform: string;
   request(
     method:
+      | "appearance.get"
+      | "appearance.set"
       | "release.status"
       | "release.check"
       | "release.activate"
