@@ -1,4 +1,4 @@
-import { SettingRow, StatusBadge } from "../components";
+import { Button, SettingRow, StatusBadge } from "../components";
 import { useEffect, useState } from "react";
 import type { FeatureProps } from "../modules";
 export function GatewaySettings({ run, busy }: FeatureProps) {
@@ -33,8 +33,8 @@ export function GatewaySettings({ run, busy }: FeatureProps) {
           </StatusBadge>
         </SettingRow>
         <SettingRow label="测试服务" description="用于内部验收的独立服务。">
-          <button
-            disabled={busy}
+          <Button
+            pending={Boolean(busy)}
             className="secondary"
             onClick={() =>
               run(async () => {
@@ -48,7 +48,7 @@ export function GatewaySettings({ run, busy }: FeatureProps) {
             }
           >
             {status.lifecycle === "ready" ? "停止测试服务" : "启动测试服务"}
-          </button>
+          </Button>
         </SettingRow>
       </div>
     </section>

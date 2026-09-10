@@ -1,4 +1,4 @@
-import { Combobox, outletChoices, PageHeader } from "../components";
+import { Button, Combobox, outletChoices, PageHeader } from "../components";
 import type { FeatureProps } from "../modules";
 import { mutation } from "../../../packages/client/src/index";
 import { Traffic } from "./Traffic";
@@ -99,9 +99,9 @@ export function Overview({
               </span>
             </div>
           </div>
-          <button className="primary" onClick={() => navigate("nodes")}>
+          <Button className="primary" onClick={() => navigate("nodes")}>
             添加第一个节点
-          </button>
+          </Button>
         </section>
       ) : null}
       <section className="metrics" aria-label="运行指标">
@@ -124,13 +124,13 @@ export function Overview({
         <section className="panel exitpanel">
           <div className="paneltitle">
             <h2>代理出口</h2>
-            <button
+            <Button
               className="iconbutton"
               aria-label="管理节点"
               onClick={() => navigate("nodes")}
             >
               <Icon name="nodes" />
-            </button>
+            </Button>
           </div>
           <Combobox
             id="outbound"
@@ -155,23 +155,23 @@ export function Overview({
           <dl className="settingslist">
             <dt>接入方式</dt>
             <dd>
-              <button
+              <Button
                 className="inlineaction"
                 onClick={() => navigate("settings")}
               >
                 {modeLabels[c.settings.mode]} <Icon name="chevron" size={12} />
-              </button>
+              </Button>
             </dd>
             <dt>监听地址</dt>
             <dd className="mono">127.0.0.1:{c.settings.listenPort}</dd>
             <dt>分流规则</dt>
             <dd>
-              <button
+              <Button
                 className="inlineaction"
                 onClick={() => navigate("rules")}
               >
                 {c.rules.length} 条 <Icon name="chevron" size={12} />
-              </button>
+              </Button>
             </dd>
             <dt>配置状态</dt>
             <dd>
@@ -179,13 +179,13 @@ export function Overview({
             </dd>
           </dl>
           {pending ? (
-            <button
+            <Button
               className="secondary applybutton"
-              disabled={busy}
+              pending={Boolean(busy)}
               onClick={() => run(() => mutation("proxy.connect"))}
             >
               重新连接并应用
-            </button>
+            </Button>
           ) : (
             <div className="exitnote">
               <Icon name="arrow" size={14} />
@@ -205,13 +205,13 @@ export function Overview({
         <section className="panel environmentpanel">
           <div className="paneltitle">
             <h2>网络状态</h2>
-            <button
+            <Button
               className="iconbutton"
               aria-label="查看网络环境"
               onClick={() => navigate("network")}
             >
               <Icon name="chevron" size={14} />
-            </button>
+            </Button>
           </div>
           <dl className="settingslist">
             <dt>默认接口</dt>
@@ -236,15 +236,15 @@ export function Overview({
           <div className="smallsection">
             <span>资源</span>
             <div className="resourcecounts">
-              <button onClick={() => navigate("nodes")}>
+              <Button onClick={() => navigate("nodes")}>
                 <strong>{c.nodes.length}</strong>
                 <small>节点</small>
-              </button>
-              <button onClick={() => navigate("nodes")}>
+              </Button>
+              <Button onClick={() => navigate("nodes")}>
                 <strong>{c.subscriptions.length}</strong>
                 <small>订阅</small>
-              </button>
-              <button onClick={() => navigate("activity")}>
+              </Button>
+              <Button onClick={() => navigate("activity")}>
                 <strong>
                   {
                     snapshot.operations.filter(
@@ -253,7 +253,7 @@ export function Overview({
                   }
                 </strong>
                 <small>近期异常</small>
-              </button>
+              </Button>
             </div>
           </div>
         </section>
@@ -265,7 +265,7 @@ export function Overview({
           role="alert"
         >
           {snapshot.kernel.message ?? "代理状态异常，请查看操作记录"}
-          <button onClick={() => navigate("activity")}>查看记录</button>
+          <Button onClick={() => navigate("activity")}>查看记录</Button>
         </div>
       ) : null}
     </>

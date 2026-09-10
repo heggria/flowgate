@@ -1,4 +1,4 @@
-import { SearchField, EmptyState } from "../components";
+import { Button, SearchField, EmptyState } from "../components";
 import { useState, useEffect, useRef } from "react";
 import type {
   Configuration,
@@ -189,14 +189,14 @@ function ImportSubscription({
             { id: "url", name: "订阅链接" },
             { id: "text", name: "配置文本" },
           ].map((mode) => (
-            <button
+            <Button
               key={mode.id}
               type="button"
               aria-pressed={draft.value.mode === mode.id}
               onClick={() => draft.change({ mode: mode.id })}
             >
               {mode.name}
-            </button>
+            </Button>
           ))}
         </div>
         {draft.value.mode === "url" ? (
@@ -238,7 +238,7 @@ function ImportSubscription({
                     setUrlError("");
                   }}
                 />
-                <button
+                <Button
                   type="button"
                   aria-label="清除订阅链接"
                   onClick={() => {
@@ -248,7 +248,7 @@ function ImportSubscription({
                   }}
                 >
                   <Icon name="close" size={13} />
-                </button>
+                </Button>
               </div>
             </Field>
           </>
@@ -333,9 +333,9 @@ export function Nodes({
   return (
     <div className="resourcepage">
       <PageHeader title="节点与订阅" description="管理代理资源，选择流量出口。">
-        <button className="primary" onClick={() => setAdding(true)}>
+        <Button className="primary" onClick={() => setAdding(true)}>
           <span aria-hidden="true">＋</span> 添加订阅
-        </button>
+        </Button>
       </PageHeader>
       {notice ? (
         <p className="inlinenotice" role="status">
@@ -378,13 +378,10 @@ export function Nodes({
                   </small>
                 </div>
                 <div className="nodeactions">
-                  <button
+                  <Button
                     className="latencybutton"
-                    disabled={
-                      !running ||
-                      appliedRevision !== config.revision ||
-                      measurementById.get(n.id)?.state === "running"
-                    }
+                    disabled={!running || appliedRevision !== config.revision}
+                    pending={measurementById.get(n.id)?.state === "running"}
                     aria-label={`测延迟 ${n.name}`}
                     title={
                       !running
@@ -405,8 +402,8 @@ export function Nodes({
                         : measurementById.get(n.id)?.state === "failed"
                           ? "重试测速"
                           : "测延迟"}
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     className={
                       n.id === config.settings.selectedNode
                         ? "quiet chosen"
@@ -426,9 +423,9 @@ export function Nodes({
                     {n.id === config.settings.selectedNode
                       ? "✓ 已选择"
                       : "选择出口"}
-                  </button>
+                  </Button>
                   <ActionMenu label={`更多操作 ${n.name}`}>
-                    <button onClick={() => setEditing(n.id)}>编辑</button>
+                    <Button onClick={() => setEditing(n.id)}>编辑</Button>
                     <ConfirmAction
                       label="移除"
                       title={`移除节点「${n.name}」？`}
@@ -452,14 +449,14 @@ export function Nodes({
             }
             icon="nodes"
           >
-            <button
+            <Button
               className="secondary"
               onClick={() =>
                 config.nodes.length ? setQuery("") : setAdding(true)
               }
             >
               {config.nodes.length ? "清除搜索" : "导入代理资源"}
-            </button>
+            </Button>
           </EmptyState>
         )}
       </section>
@@ -487,23 +484,23 @@ export function Nodes({
                 </small>
                 {s.error ? <TaskError message={s.error} /> : null}
               </div>
-              <button
+              <Button
                 className="quiet"
                 onClick={() =>
                   run(() => mutation("subscription.refresh", { id: s.id }))
                 }
               >
                 更新
-              </button>
+              </Button>
               <ActionMenu label={`管理订阅 ${s.name}`}>
-                <button
+                <Button
                   onClick={() => {
                     sourceDraft.change({ id: s.id, name: s.name });
                     setRenaming(true);
                   }}
                 >
                   重命名
-                </button>
+                </Button>
                 <ConfirmAction
                   label="移除来源"
                   title={`移除订阅「${s.name}」？`}

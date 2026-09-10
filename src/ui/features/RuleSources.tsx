@@ -4,6 +4,7 @@ import type { FeatureProps } from "../modules";
 import { mutation } from "../../../packages/client/src/index";
 import { useDraft } from "../drafts";
 import {
+  Button,
   ActionMenu,
   Combobox,
   Field,
@@ -33,9 +34,9 @@ export function RuleSources({ snapshot, run, busy }: FeatureProps) {
             {snapshot.configuration.ruleSources?.length ?? 0}
           </span>
         </h2>
-        <button className="secondary" onClick={() => setAdding(true)}>
+        <Button className="secondary" onClick={() => setAdding(true)}>
           添加规则集
-        </button>
+        </Button>
       </div>
       {!snapshot.configuration.ruleSources?.length ? (
         <p className="sectionempty">从 URL 导入一组规则，集中管理与更新。</p>
@@ -52,15 +53,15 @@ export function RuleSources({ snapshot, run, busy }: FeatureProps) {
             </small>
             <TaskError message={source.error} />
           </div>
-          <button
+          <Button
             className="quiet"
-            disabled={busy}
+            pending={Boolean(busy)}
             onClick={() =>
               run(() => mutation("ruleset.refresh", { id: source.id }))
             }
           >
             更新
-          </button>
+          </Button>
           <ActionMenu label={`管理规则集 ${source.name}`}>
             <ConfirmAction
               label="移除规则集"

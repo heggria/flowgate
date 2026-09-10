@@ -19,11 +19,14 @@
   --text: #242426;
   --muted: #68686e;
   --hover: #ededed;
+  --pressed: #dcdcdf;
+  --selected-hover: #dedee0;
+  --switch-off: #74747c;
   --blue: #464850;
   --active: #e8e8e7;
   --on-accent: #fff;
   --green: #267657;
-  --control-border: #d4d4d6;
+  --control-border: #8a8a92;
   --control-bg: #fff;
   --focus: #747984;
   --shadow: none;
@@ -71,11 +74,14 @@
   --muted: #aeafb5;
   --faint: #a3a4ab;
   --hover: #303033;
+  --pressed: #444449;
+  --selected-hover: #3a3a40;
+  --switch-off: #74747c;
   --blue: #e5e5e7;
   --active: #2c2c2f;
   --on-accent: #222225;
   --green: #7bcaa4;
-  --control-border: #49494d;
+  --control-border: #777780;
   --control-bg: #28282b;
   --focus: #a1a6b3;
   --dialog-shadow: 0 24px 80px #0008, 0 0 0 1px #ffffff08;
@@ -84,11 +90,8 @@
 * {
   box-sizing: border-box;
 }
-svg:focus-visible {
-  outline: 2px solid var(--blue);
-  outline-offset: 3px;
-}
-button:hover {
+
+button:not(:disabled):not([aria-disabled="true"]):hover {
   background: var(--hover);
 }
 .app {
@@ -608,8 +611,8 @@ select:disabled {
 textarea:disabled {
   opacity: 0.65;
 }
-.navsearch:focus-within {
-  outline: 2px solid var(--blue);
+.navsearch:has(input:focus-visible) {
+  outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
 .sidebar nav {
@@ -844,7 +847,7 @@ pre {
   font-weight: 600;
   margin: 0;
 }
-.extensionname:hover {
+.extensionname:not(:disabled):not([aria-disabled="true"]):hover {
   text-decoration: underline;
 }
 .extensioncard p:not(.taskerror) {
@@ -901,8 +904,7 @@ pre {
   margin: -4px 0 16px;
 }
 .extensionspage input[aria-disabled="true"] {
-  opacity: 0.55;
-  cursor: wait;
+  cursor: progress;
 }
 .extensiondetail {
   max-height: calc(100vh - 230px);
@@ -999,7 +1001,7 @@ body {
   margin-bottom: 16px;
   padding: 7px 10px;
 }
-.navsearch:hover {
+.navsearch:not(:disabled):not([aria-disabled="true"]):hover {
   background: var(--hover);
 }
 .navsearch input {
@@ -1110,10 +1112,8 @@ button {
   border: 0;
   background: none;
   color: inherit;
-  transition:
-    background-color 120ms ease,
-    border-color 120ms ease,
-    color 120ms ease;
+  /* Theme foreground/background change together to avoid transient low contrast. */
+  transition: border-color 120ms ease;
   border-radius: var(--radius-control);
 }
 .primary {
@@ -1131,7 +1131,7 @@ button {
   color: var(--bg);
   box-shadow: var(--shadow-primary);
 }
-.primary:hover {
+.primary:not(:disabled):not([aria-disabled="true"]):hover {
   background: var(--text);
   filter: brightness(0.92);
 }
@@ -1151,7 +1151,7 @@ button {
   border-color: var(--control-border);
   box-shadow: var(--shadow-button);
 }
-.secondary:hover {
+.secondary:not(:disabled):not([aria-disabled="true"]):hover {
   background: var(--hover);
 }
 .quiet {
@@ -1184,6 +1184,30 @@ summary:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
+/* Focus belongs to the input container OR its separate action, never both. */
+.navsearch input:focus-visible {
+  outline: none;
+}
+.searchfield button {
+  min-width: 24px;
+  min-height: 24px;
+  flex: none;
+  display: grid;
+  place-items: center;
+}
+button:not(:disabled):not([aria-disabled="true"]):active,
+summary:active {
+  background: var(--pressed);
+}
+
+.nav.active:not(:disabled):not([aria-disabled="true"]):hover,
+[aria-pressed="true"]:not(:disabled):not([aria-disabled="true"]):hover {
+  background: var(--selected-hover);
+}
+.nav.active:not(:disabled):not([aria-disabled="true"]):active,
+[aria-pressed="true"]:not(:disabled):not([aria-disabled="true"]):active {
+  background: var(--pressed);
+}
 input {
   font: inherit;
   width: 100%;
@@ -1206,13 +1230,15 @@ textarea::placeholder {
   color: var(--faint);
   opacity: 1;
 }
-input:hover {
+input:not(:disabled):not([aria-disabled="true"]):not(
+    .invalidfield input
+  ):hover {
   border-color: var(--faint);
 }
-select:hover {
+select:not(:disabled):not([aria-disabled="true"]):hover {
   border-color: var(--faint);
 }
-textarea:hover {
+textarea:not(:disabled):not([aria-disabled="true"]):hover {
   border-color: var(--faint);
 }
 input[type="checkbox"] {
@@ -1670,6 +1696,9 @@ label {
 .actionmenu[open] summary {
   background: var(--hover);
 }
+.actionmenu summary:active {
+  background: var(--pressed);
+}
 .actionitems {
   background: var(--surface);
   border: 1px solid var(--control-border);
@@ -1802,7 +1831,7 @@ label {
   background: transparent;
   box-shadow: none;
 }
-.inputgroup:focus-within {
+.inputgroup:has(input:focus-visible) {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
@@ -1943,6 +1972,11 @@ label {
   padding: 5px 0;
   font-size: var(--font-sm);
 }
+.selectsearch:has(input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+  border-radius: var(--radius-control);
+}
 .selectsearch input:focus-visible {
   outline: 0;
 }
@@ -1961,8 +1995,19 @@ label {
   cursor: pointer;
   min-height: var(--button-height);
 }
+.selectoption[aria-selected="true"] {
+  background: var(--active);
+}
 .selectoption.activeoption {
   background: var(--hover);
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.selectoption[aria-selected="true"].activeoption {
+  background: var(--selected-hover);
+}
+.selectoption:active {
+  background: var(--pressed);
 }
 .selectoption > div {
   min-width: 0;
@@ -2121,6 +2166,27 @@ label {
   border-color: var(--text);
   box-shadow: inset 0 0 0 0.5px var(--text);
 }
+.modecard:has(input:not(:disabled):not([aria-disabled="true"])):hover {
+  background: var(--hover);
+}
+.modecard.selected:has(input:not(:disabled):not([aria-disabled="true"])):hover {
+  background: var(--selected-hover);
+}
+.modecard.selected:has(input:not(:disabled):not([aria-disabled="true"])):active,
+.modecard:has(input:not(:disabled):not([aria-disabled="true"])):active {
+  background: var(--pressed);
+}
+.modecard:has(input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.modecard input:focus-visible {
+  outline: none;
+}
+.modecard:has(input:disabled),
+.modecard:has(input[aria-disabled="true"]) {
+  cursor: default;
+}
 .modecard input {
   position: absolute;
   right: 12px;
@@ -2187,22 +2253,22 @@ label {
 input.switchinput {
   appearance: none;
   position: relative;
-  width: 32px;
-  height: 19px;
-  min-height: 0;
+  width: 36px;
+  height: 24px;
+  min-height: 24px;
   padding: 0;
   border: 0;
-  background: var(--control-border);
+  background: var(--switch-off);
   border-radius: 20px;
   cursor: pointer;
 }
 input.switchinput::after {
   content: "";
   position: absolute;
-  width: 15px;
-  height: 15px;
-  top: 2px;
-  left: 2px;
+  width: 18px;
+  height: 18px;
+  top: 3px;
+  left: 3px;
   border-radius: 50%;
   background: var(--switch-knob);
   box-shadow: var(--shadow-switch);
@@ -2212,8 +2278,21 @@ input.switchinput:checked {
   background: var(--text);
 }
 input.switchinput:checked::after {
-  transform: translateX(13px);
+  transform: translateX(12px);
   background: var(--bg);
+}
+
+input.switchinput:not(:disabled):not([aria-disabled="true"]):hover {
+  background: #85858e;
+}
+input.switchinput:checked:not(:disabled):not([aria-disabled="true"]):hover {
+  background: color-mix(in srgb, var(--text) 85%, var(--control-bg));
+}
+input.switchinput:not(:disabled):not([aria-disabled="true"]):active {
+  background: #7c7c85;
+}
+input.switchinput:checked:not(:disabled):not([aria-disabled="true"]):active {
+  background: color-mix(in srgb, var(--text) 70%, var(--control-bg));
 }
 .settingssave {
   display: flex;
@@ -2304,7 +2383,7 @@ input.switchinput:checked::after {
   padding: 0 10px;
   background: var(--control-bg);
 }
-.searchfield:focus-within {
+.searchfield:has(input:focus-visible) {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
@@ -2522,9 +2601,13 @@ input.switchinput:checked::after {
   font-size: var(--font-sm);
   border-radius: var(--radius-control);
 }
-.dangerbutton:hover {
+.dangerbutton:not(:disabled):not([aria-disabled="true"]):hover {
   background: var(--danger-solid);
   filter: brightness(0.92);
+}
+.primary:not(:disabled):not([aria-disabled="true"]):active,
+.dangerbutton:not(:disabled):not([aria-disabled="true"]):active {
+  filter: brightness(0.8);
 }
 .connectionpanel .tablewrap {
   margin-left: calc(-1 * var(--panel-padding));
@@ -2627,8 +2710,24 @@ button.dangertext {
   border-color: var(--warning-border);
 }
 button[aria-disabled="true"] {
-  opacity: 0.55;
-  cursor: wait;
+  cursor: default;
+}
+button[aria-busy="true"] {
+  cursor: progress;
+}
+.controltooltip {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  padding: 6px 9px;
+  max-width: min(280px, calc(100vw - 16px));
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-control);
+  background: var(--text);
+  color: var(--bg);
+  font-size: var(--font-sm);
+  box-shadow: var(--shadow-popover);
+  pointer-events: auto;
 }
 @media (max-width: 1150px) {
   .dashboardgrid {
@@ -2898,6 +2997,7 @@ button[aria-disabled="true"] {
     max-width: 100%;
     width: 100%;
   }
+
   .settingssave {
     flex-wrap: wrap;
   }
@@ -2952,5 +3052,38 @@ button[aria-disabled="true"] {
     animation: none !important;
     transition: none !important;
     scroll-behavior: auto !important;
+  }
+}
+
+@media (forced-colors: active) {
+  :root {
+    --focus: Highlight;
+    --control-border: ButtonText;
+  }
+  button,
+  summary,
+  input,
+  select,
+  textarea {
+    forced-color-adjust: auto;
+  }
+  .nav.active,
+  [aria-selected="true"],
+  [aria-pressed="true"] {
+    border: 1px solid Highlight;
+  }
+  input.switchinput {
+    forced-color-adjust: none;
+    background: Canvas !important;
+    border: 1px solid ButtonText;
+  }
+  input.switchinput::after {
+    background: ButtonText;
+  }
+  input.switchinput:checked {
+    background: Highlight !important;
+  }
+  input.switchinput:checked::after {
+    background: HighlightText;
   }
 }

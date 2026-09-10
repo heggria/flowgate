@@ -1,4 +1,4 @@
-import { SearchField, Combobox, EmptyState } from "../components";
+import { Button, SearchField, Combobox, EmptyState } from "../components";
 import { useState, useRef, useEffect, useId } from "react";
 import type {
   TrafficSnapshot,
@@ -66,9 +66,9 @@ export function Traffic({
           <span className="count">{rows.length}</span>
         </h2>
         {compact ? (
-          <button className="textbutton" onClick={onExpand}>
+          <Button className="textbutton" onClick={onExpand}>
             查看全部 <Icon name="chevron" size={13} />
-          </button>
+          </Button>
         ) : (
           <label className="checkbox">
             <input
@@ -118,7 +118,7 @@ export function Traffic({
                 className={current?.id === f.id ? "selectedrow" : ""}
               >
                 <td>
-                  <button
+                  <Button
                     className="targetbutton"
                     aria-expanded={current?.id === f.id}
                     aria-controls={
@@ -133,7 +133,7 @@ export function Traffic({
                       className={f.state === "active" ? "dot online" : "dot"}
                     />
                     <span title={f.target}>{f.target}</span>
-                  </button>
+                  </Button>
                   <small className="protocol">
                     {f.protocol.toUpperCase()} ·{" "}
                     {f.state === "active" ? "活跃" : "已结束"}
@@ -161,7 +161,7 @@ export function Traffic({
           }
         >
           {query || active ? (
-            <button
+            <Button
               className="textbutton"
               onClick={() => {
                 setQuery("");
@@ -169,7 +169,7 @@ export function Traffic({
               }}
             >
               清除筛选
-            </button>
+            </Button>
           ) : null}
         </EmptyState>
       ) : null}
@@ -189,13 +189,13 @@ export function Traffic({
         >
           <div className="paneltitle">
             <h2>连接详情</h2>
-            <button
+            <Button
               className="iconbutton"
               aria-label="关闭连接详情"
               onClick={closeDetails}
             >
               <Icon name="close" />
-            </button>
+            </Button>
           </div>
           {configuration
             ? detailPanels?.map(({ id, Component }) => (

@@ -1,3 +1,4 @@
+import { Button } from "../components";
 import { useState, useEffect, useRef } from "react";
 import type { TrafficSnapshot } from "../../../packages/contracts/src/index";
 import { bytes } from "../format";
@@ -65,7 +66,7 @@ export function TrafficChart({
         <h2>流量趋势</h2>
         <div className="segmented" aria-label="图表时间范围">
           {[60, 300, 600].map((s) => (
-            <button
+            <Button
               key={s}
               aria-pressed={range === s}
               onClick={() => {
@@ -74,7 +75,7 @@ export function TrafficChart({
               }}
             >
               {s / 60} 分钟
-            </button>
+            </Button>
           ))}
         </div>
       </div>

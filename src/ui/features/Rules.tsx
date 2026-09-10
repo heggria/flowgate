@@ -1,4 +1,4 @@
-import { EmptyState } from "../components";
+import { Button, EmptyState } from "../components";
 import { useState } from "react";
 import { useDraft } from "../drafts";
 import type {
@@ -49,9 +49,9 @@ export function Rules({
         title="分流规则"
         description="从上到下匹配，第一条命中的规则决定出口。"
       >
-        <button className="primary" onClick={() => setEditing("new")}>
+        <Button className="primary" onClick={() => setEditing("new")}>
           ＋ 添加规则
-        </button>
+        </Button>
       </PageHeader>
       {notice ? (
         <p className="inlinenotice" role="status">
@@ -93,23 +93,23 @@ export function Rules({
                 {outboundName(r.outbound)}
               </span>
               <div className="rowactions">
-                <button
+                <Button
                   className="iconbutton"
                   aria-label={`上移规则 ${r.value}`}
                   disabled={index === 0}
                   onClick={() => move(index, -1)}
                 >
                   ↑
-                </button>
-                <button
+                </Button>
+                <Button
                   className="iconbutton"
                   aria-label={`下移规则 ${r.value}`}
                   disabled={index === config.rules.length - 1}
                   onClick={() => move(index, 1)}
                 >
                   ↓
-                </button>
-                <button
+                </Button>
+                <Button
                   className="quiet"
                   title={
                     r.sourceId
@@ -121,8 +121,8 @@ export function Rules({
                   }}
                 >
                   编辑
-                </button>
-                <button
+                </Button>
+                <Button
                   className="iconbutton dangertext"
                   aria-label={`删除规则 ${r.value}`}
                   onClick={async () => {
@@ -136,7 +136,7 @@ export function Rules({
                   }}
                 >
                   <Icon name="close" size={13} />
-                </button>
+                </Button>
               </div>
             </div>
           ))

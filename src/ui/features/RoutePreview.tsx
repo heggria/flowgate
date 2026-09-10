@@ -1,6 +1,6 @@
 import { useDraft } from "../drafts";
 import { useState } from "react";
-import { Field, TaskError, useTask } from "../components";
+import { Button, Field, TaskError, useTask } from "../components";
 export function RoutePreview() {
   const draft = useDraft("preview", { target: "" });
   const [result, setResult] = useState("");
@@ -38,12 +38,13 @@ export function RoutePreview() {
               required
               disabled={task.pending}
             />
-            <button
+            <Button
               className="secondary"
-              disabled={task.pending || !draft.ready}
+              pending={task.pending}
+              disabled={!draft.ready}
             >
               {task.pending ? "检查中…" : "检查路径"}
-            </button>
+            </Button>
           </div>
         </Field>
         <TaskError message={task.error || draft.error} />

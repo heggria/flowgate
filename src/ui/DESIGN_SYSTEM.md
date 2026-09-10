@@ -14,19 +14,19 @@ This file describes the implemented shared UI contract. It applies to every rout
 
 ## Components
 
-| Need | Shared implementation |
-| --- | --- |
-| Route title, description, primary actions | `PageHeader` |
-| Search with icon and clear action | `SearchField` |
-| Choice, searchable options, keyboard selection | `Combobox` |
-| Labeled form input and helper/error text | `Field` |
-| Settings label/help/control alignment | `SettingRow` |
-| Focused creation/edit task | `Modal`, `FormFooter`, `useTask`, `TaskError` |
-| Destructive confirmation | `ConfirmAction`, same dialog structure; initial focus on Cancel |
-| Empty or filtered-out resources | `EmptyState`, compact variant inside panels |
-| Neutral/success/warning/error labels | `StatusBadge` |
-| Optional diagnostic/details content | `Disclosure` |
-| Per-resource secondary actions | `ActionMenu` |
+| Need                                           | Shared implementation                                           |
+| ---------------------------------------------- | --------------------------------------------------------------- |
+| Route title, description, primary actions      | `PageHeader`                                                    |
+| Search with icon and clear action              | `SearchField`                                                   |
+| Choice, searchable options, keyboard selection | `Combobox`                                                      |
+| Labeled form input and helper/error text       | `Field`                                                         |
+| Settings label/help/control alignment          | `SettingRow`                                                    |
+| Focused creation/edit task                     | `Modal`, `FormFooter`, `useTask`, `TaskError`                   |
+| Destructive confirmation                       | `ConfirmAction`, same dialog structure; initial focus on Cancel |
+| Empty or filtered-out resources                | `EmptyState`, compact variant inside panels                     |
+| Neutral/success/warning/error labels           | `StatusBadge`                                                   |
+| Optional diagnostic/details content            | `Disclosure`                                                    |
+| Per-resource secondary actions                 | `ActionMenu`                                                    |
 
 Use existing `.primary`, `.secondary`, `.quiet`, `.iconbutton`, `.dangerbutton` action styles. These are intentionally native buttons for normal form, disabled and keyboard behavior. Do not create feature-specific button palettes.
 
@@ -49,3 +49,13 @@ Panel padding, page gutters and sidebar width use shared variables. Table edge a
 Menus use the native popover top layer with measured viewport placement; choice menus measure their actual height. Scrolling outside or resizing dismisses them. Dialogs mount into the document body, avoiding row-specific styles and event handling. Menu-origin dialogs restore focus to the persistent menu trigger. Error text and destructive actions retain semantic colors; opacity must not make functional labels fail contrast.
 
 `tests/ui-layout.integration.mjs` checks 96 real-Service route/theme/actual-viewport cases, long resources, table bounds, axe contrast/accessibility, popup edge placement, keyboard selection, portal placement and focus restoration. `tests/ui-states.integration.mjs` checks loading, pending, failure, cancellation, withdrawn updates and synthetic traffic in explicitly marked presentation fixtures. These fixtures verify UI states only; they are not connectivity evidence. Both tests run hidden and non-focusable and are included in `npm run verify`.
+
+## Interaction states
+
+Use `Button` for actions. Native `disabled` means unavailable; `pending` blocks activation and announces busy while retaining keyboard focus. Synchronous guards in `useTask`/`run` remain the write boundary. Modal footers are outside the disabled fieldset and retain their native form association.
+
+Hover, held press, selection and keyboard focus are independent. Activation occurs on release; moving outside cancels. Disabled/pending controls have no hover/pressed treatment. Composite input outlines belong to the container only while its input has visible focus; clear/reveal actions own their own outline. Clear restores input focus. Switches have a 36 by 24 CSS pixel target.
+
+Combobox search keeps Home/End, modifier keys and IME editing; arrows move the active option, selection retains a checkmark and background, Escape restores the trigger. Action menus and dialogs restore persistent triggers. Button titles use hoverable, keyboard-accessible tooltips dismissed by Escape, scroll or resize. Reduced motion and forced colors are supported.
+
+`tests/ui-interactions.integration.mjs` verifies the interaction contract using hidden renderer fixtures, separate from real network acceptance.

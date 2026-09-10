@@ -1,5 +1,8 @@
 import { client } from "../../packages/client/src/index";
 import {
+  createContext,
+  useContext,
+  type ComponentProps,
   useEffect,
   useLayoutEffect,
   useId,
@@ -10,6 +13,152 @@ import {
 import { createPortal } from "react-dom";
 import type { Configuration } from "../../packages/contracts/src/index";
 import { Icon } from "./icons";
+
+/** Pending actions remain focusable; unavailable actions retain native disabled semantics. */
+export function Button({
+  pending = false,
+  disabled,
+  onClick,
+  title,
+  ...props
+}: ComponentProps<"button"> & { pending?: boolean }) {
+  const id = useId();
+  const tooltip = useRef<HTMLSpanElement>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hide = () => {
+    if (timer.current) clearTimeout(timer.current);
+    tooltip.current?.hidePopover();
+  };
+  const show = (button: HTMLButtonElement) => {
+    hide();
+    timer.current = setTimeout(() => {
+      const el = tooltip.current;
+      if (!el || !button.isConnected) return;
+      el.showPopover();
+      const r = button.getBoundingClientRect(),
+        box = el.getBoundingClientRect();
+      el.style.left = `${Math.max(8, Math.min(r.left, innerWidth - box.width - 8))}px`;
+      el.style.top = `${r.bottom + box.height + 8 < innerHeight ? r.bottom + 6 : Math.max(8, r.top - box.height - 6)}px`;
+    }, 450);
+  };
+  useEffect(() => {
+    if (!title) return;
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") hide();
+    };
+    window.addEventListener("keydown", escape);
+    window.addEventListener("scroll", hide, true);
+    window.addEventListener("resize", hide);
+    return () => {
+      hide();
+      window.removeEventListener("keydown", escape);
+      window.removeEventListener("scroll", hide, true);
+      window.removeEventListener("resize", hide);
+    };
+  }, [title]);
+  return (
+    <>
+      <button
+        {...props}
+        disabled={disabled}
+        aria-describedby={
+          title
+            ? [props["aria-describedby"], id].filter(Boolean).join(" ")
+            : props["aria-describedby"]
+        }
+        aria-disabled={pending || props["aria-disabled"] || undefined}
+        aria-busy={pending || props["aria-busy"] || undefined}
+        onPointerEnter={(e) => {
+          if (title) show(e.currentTarget);
+          props.onPointerEnter?.(e);
+        }}
+        onPointerLeave={(e) => {
+          if (timer.current) clearTimeout(timer.current);
+          if (title) timer.current = setTimeout(hide, 120);
+          props.onPointerLeave?.(e);
+        }}
+        onFocus={(e) => {
+          if (title) show(e.currentTarget);
+          props.onFocus?.(e);
+        }}
+        onBlur={(e) => {
+          hide();
+          props.onBlur?.(e);
+        }}
+        onClick={(event) => {
+          hide();
+          if (
+            pending ||
+            props["aria-disabled"] === true ||
+            props["aria-disabled"] === "true"
+          ) {
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
+          onClick?.(event);
+        }}
+      />
+      {title ? (
+        <span
+          ref={tooltip}
+          id={id}
+          role="tooltip"
+          popover="manual"
+          className="controltooltip"
+          onPointerEnter={() => {
+            if (timer.current) clearTimeout(timer.current);
+          }}
+          onPointerLeave={hide}
+        >
+          {title}
+        </span>
+      ) : null}
+    </>
+  );
+}
+/** A pending switch/radio keeps its native keyboard position without accepting another change. */
+export function Toggle({
+  pending = false,
+  onChange,
+  onClick,
+  onKeyDown,
+  ...props
+}: ComponentProps<"input"> & { pending?: boolean }) {
+  return (
+    <input
+      {...props}
+      aria-disabled={pending || props["aria-disabled"] || undefined}
+      aria-busy={pending || undefined}
+      onClick={(event) => {
+        if (pending) {
+          event.preventDefault();
+          return;
+        }
+        onClick?.(event);
+      }}
+      onChange={(event) => {
+        if (!pending) onChange?.(event);
+      }}
+      onKeyDown={(event) => {
+        if (
+          pending &&
+          [" ", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(
+            event.key,
+          )
+        ) {
+          event.preventDefault();
+          return;
+        }
+        onKeyDown?.(event);
+      }}
+    />
+  );
+}
+const FooterContext = createContext<{
+  host: HTMLDivElement | null;
+  formId: string;
+} | null>(null);
 
 export function useTask() {
   const active = useRef(false),
@@ -131,10 +280,14 @@ export function Modal({
 }) {
   const ref = useRef<HTMLDialogElement>(null),
     titleId = useId(),
-    descriptionId = useId();
+    descriptionId = useId(),
+    formId = useId();
+  const [footerHost, setFooterHost] = useState<HTMLDivElement | null>(null);
   useEffect(() => {
     const element = ref.current!,
       trigger = focusReturnTarget(document.activeElement as HTMLElement | null);
+    const form = element.querySelector("form");
+    if (form) form.id = formId;
     element.showModal();
     const firstField =
       element.querySelector<HTMLElement>("[data-autofocus]") ??
@@ -162,28 +315,31 @@ export function Modal({
         <span className="dialogicon">
           <Icon name={icon} size={19} />
         </span>
-        <button
+        <Button
           type="button"
           className="iconbutton dialogclose"
           aria-label="关闭表单"
-          disabled={busy}
+          pending={Boolean(busy)}
           onClick={onClose}
         >
           <Icon name="close" size={16} />
-        </button>
+        </Button>
         <h2 id={titleId}>{title}</h2>
         {description ? <p id={descriptionId}>{description}</p> : null}
       </header>
       <div className="dialogcontent">
         <fieldset className="taskfields" disabled={busy}>
-          {children}
+          <FooterContext.Provider value={{ host: footerHost, formId }}>
+            {children}
+          </FooterContext.Provider>
         </fieldset>
+        <div ref={setFooterHost} />
         {busy && onCancelRequest ? (
           <div className="taskprogress">
-            <span>正在处理，请稍候…</span>
-            <button type="button" className="quiet" onClick={onCancelRequest}>
+            <span role="status">正在处理，请稍候…</span>
+            <Button type="button" className="quiet" onClick={onCancelRequest}>
               取消请求
-            </button>
+            </Button>
           </div>
         ) : null}
       </div>
@@ -238,18 +394,24 @@ export function FormFooter({
   label: string;
   hint?: string;
 }) {
-  return (
+  const context = useContext(FooterContext);
+  const footer = (
     <footer className="dialogfooter">
       <span>{hint}</span>
-      <button
+      <Button
         type="button"
         className="secondary"
-        disabled={pending}
+        pending={Boolean(pending)}
         onClick={onClose}
       >
         取消
-      </button>
-      <button className="primary" disabled={pending || !ready}>
+      </Button>
+      <Button
+        className="primary"
+        form={context?.formId}
+        pending={pending}
+        disabled={!ready}
+      >
         {pending ? (
           <>
             <span className="buttonspinner" />
@@ -258,9 +420,14 @@ export function FormFooter({
         ) : (
           label
         )}
-      </button>
+      </Button>
     </footer>
   );
+  return context
+    ? context.host
+      ? createPortal(footer, context.host)
+      : null
+    : footer;
 }
 export function TaskError({ message }: { message?: string }) {
   return message ? (
@@ -373,6 +540,7 @@ export function Combobox({
   const button = useRef<HTMLButtonElement>(null),
     popover = useRef<HTMLDivElement>(null),
     input = useRef<HTMLInputElement>(null);
+  const placement = useRef<DOMRect | null>(null);
   const [open, setOpen] = useState(false),
     [query, setQuery] = useState(""),
     [active, setActive] = useState(0);
@@ -402,18 +570,31 @@ export function Combobox({
     );
     popover.current.showPopover();
     placePopover(button.current, popover.current, 280, 316);
+    placement.current = button.current.getBoundingClientRect();
     setOpen(true);
-    input.current?.focus();
+    input.current?.focus({ preventScroll: true });
   };
   useLayoutEffect(() => {
-    if (open && button.current && popover.current)
+    if (open && button.current && popover.current) {
       placePopover(button.current, popover.current, 280, 316);
+      placement.current = button.current.getBoundingClientRect();
+    }
   }, [open, query, options.length]);
   useEffect(() => {
     if (!open) return;
     const close = () => dismiss(false);
     const scroll = (event: Event) => {
-      if (!popover.current?.contains(event.target as Node)) close();
+      if (popover.current?.contains(event.target as Node)) return;
+      const rect = button.current?.getBoundingClientRect(),
+        previous = placement.current;
+      // A scroll queued before opening must not dismiss a correctly placed popup.
+      if (
+        !rect ||
+        !previous ||
+        rect.top !== previous.top ||
+        rect.left !== previous.left
+      )
+        close();
     };
     window.addEventListener("resize", close);
     window.addEventListener("scroll", scroll, true);
@@ -424,7 +605,7 @@ export function Combobox({
   }, [open]);
   return (
     <div className="combobox">
-      <button
+      <Button
         ref={button}
         id={id}
         type="button"
@@ -446,34 +627,33 @@ export function Combobox({
           {selected?.label ?? (value ? "不可用出口" : placeholder)}
         </span>
         <Icon name="chevron" size={12} />
-      </button>
+      </Button>
       <div
         ref={popover}
         popover="auto"
         className="selectpopover"
         onToggle={(e) => setOpen(e.newState === "open")}
         onKeyDown={(e) => {
+          if (e.nativeEvent.isComposing) return;
           if (e.key === "Escape") {
             e.preventDefault();
             e.stopPropagation();
             dismiss();
           }
-          if (["ArrowDown", "ArrowUp", "Home", "End"].includes(e.key)) {
+          if (e.metaKey || e.ctrlKey || e.altKey) return;
+          if (["ArrowDown", "ArrowUp"].includes(e.key)) {
             e.preventDefault();
-            setActive((n) =>
-              e.key === "Home"
-                ? 0
-                : e.key === "End"
-                  ? filtered.length - 1
-                  : (n + (e.key === "ArrowDown" ? 1 : -1) + filtered.length) %
-                    Math.max(1, filtered.length),
+            setActive(
+              (n) =>
+                (n + (e.key === "ArrowDown" ? 1 : -1) + filtered.length) %
+                Math.max(1, filtered.length),
             );
           }
           if (e.key === "Enter") {
             e.preventDefault();
             if (filtered[active]) choose(filtered[active]);
           }
-          if (e.key === "Tab") dismiss(false);
+          if (e.key === "Tab") dismiss();
         }}
       >
         <div className="selectsearch">
@@ -517,8 +697,16 @@ export function Combobox({
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => choose(option)}
                 ref={(el) => {
-                  if (el && index === active && open)
-                    el.scrollIntoView({ block: "nearest" });
+                  if (el && index === active && open) {
+                    const list = el.closest<HTMLElement>(".selectoptions");
+                    if (!list) return;
+                    const item = el.getBoundingClientRect(),
+                      bounds = list.getBoundingClientRect();
+                    if (item.top < bounds.top)
+                      list.scrollTop -= bounds.top - item.top;
+                    else if (item.bottom > bounds.bottom)
+                      list.scrollTop += item.bottom - bounds.bottom;
+                  }
                 }}
               >
                 <div>
@@ -546,6 +734,7 @@ export function ActionMenu({
 }) {
   const ref = useRef<HTMLDetailsElement>(null),
     popup = useRef<HTMLDivElement>(null);
+  const placement = useRef<DOMRect | null>(null);
   const pendingDirection = useRef<"first" | "last">("first");
   const [open, setOpen] = useState(false);
   const close = (restore = false) => {
@@ -558,7 +747,18 @@ export function ActionMenu({
     if (!open) return;
     const resize = () => close();
     const scroll = (event: Event) => {
-      if (!popup.current?.contains(event.target as Node)) close();
+      if (popup.current?.contains(event.target as Node)) return;
+      const rect = ref.current
+          ?.querySelector("summary")
+          ?.getBoundingClientRect(),
+        previous = placement.current;
+      if (
+        !rect ||
+        !previous ||
+        rect.top !== previous.top ||
+        rect.left !== previous.left
+      )
+        close();
     };
     window.addEventListener("resize", resize);
     window.addEventListener("scroll", scroll, true);
@@ -582,6 +782,9 @@ export function ActionMenu({
             320,
             true,
           );
+          placement.current = ref.current
+            .querySelector("summary")!
+            .getBoundingClientRect();
           setOpen(true);
           const buttons = popup.current.querySelectorAll<HTMLButtonElement>(
             "button:not(:disabled)",
@@ -595,6 +798,8 @@ export function ActionMenu({
     >
       <summary
         aria-label={label}
+        aria-expanded={open}
+        aria-haspopup="true"
         title={label}
         onKeyDown={(event) => {
           if (event.key === "ArrowDown" || event.key === "ArrowUp") {
@@ -657,7 +862,7 @@ export function ActionMenu({
         onClick={(event) => {
           if (!popup.current?.contains(event.target as Node)) return;
           if ((event.target as Element).closest("button:not(:disabled)"))
-            close();
+            close(Boolean(popup.current?.contains(document.activeElement)));
         }}
       >
         {children}
@@ -680,10 +885,12 @@ export function SearchField({
   onChange: (value: string) => void;
   clearLabel?: string;
 }) {
+  const input = useRef<HTMLInputElement>(null);
   return (
     <div className="searchfield">
       <Icon name="search" size={15} />
       <input
+        ref={input}
         type="text"
         aria-label={label}
         placeholder={placeholder}
@@ -691,13 +898,16 @@ export function SearchField({
         onChange={(e) => onChange(e.target.value)}
       />
       {value ? (
-        <button
+        <Button
           type="button"
           aria-label={clearLabel ?? `清空${label}`}
-          onClick={() => onChange("")}
+          onClick={() => {
+            onChange("");
+            input.current?.focus({ preventScroll: true });
+          }}
         >
           <Icon name="close" size={13} />
-        </button>
+        </Button>
       ) : null}
     </div>
   );

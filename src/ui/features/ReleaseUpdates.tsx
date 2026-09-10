@@ -1,4 +1,5 @@
 import {
+  Button,
   Combobox,
   SettingRow,
   Disclosure,
@@ -74,12 +75,12 @@ export function ReleaseUpdates({
           </p>
         ) : null}
         {releaseStatus?.revoked?.includes(releaseStatus.release) ? (
-          <button
+          <Button
             className="secondary"
             onClick={() => run(() => window.shell.request("recovery.restore"))}
           >
             恢复内置版本
-          </button>
+          </Button>
         ) : null}
         <SettingRow
           label="更新通道"
@@ -111,9 +112,9 @@ export function ReleaseUpdates({
         </p>
       ) : null}
 
-      <button
+      <Button
         className="secondary"
-        disabled={busy || checking || releaseStatus?.updating}
+        pending={Boolean(busy || checking || releaseStatus?.updating)}
         onClick={() =>
           run(async () => {
             setCandidate(null);
@@ -142,7 +143,7 @@ export function ReleaseUpdates({
         }
       >
         {checking ? "检查中…" : "检查更新"}
-      </button>
+      </Button>
       <Disclosure title="组件版本">
         <pre>{JSON.stringify(releaseStatus?.versions ?? {}, null, 2)}</pre>
       </Disclosure>
@@ -189,9 +190,9 @@ export function ReleaseUpdates({
         </Disclosure>
       ) : null}
       {candidate ? (
-        <button
+        <Button
           className="primary"
-          disabled={busy || checking || releaseStatus?.updating}
+          pending={Boolean(busy || checking || releaseStatus?.updating)}
           onClick={() =>
             run(() =>
               window.shell.request("release.activate", { id: candidate.id }),
@@ -199,23 +200,23 @@ export function ReleaseUpdates({
           }
         >
           应用 {candidate.id}
-        </button>
+        </Button>
       ) : null}
       <div className="sectionactions">
-        <button
+        <Button
           className="quiet"
-          disabled={busy || checking}
+          pending={Boolean(busy || checking)}
           onClick={() => run(() => window.shell.request("window.reload"))}
         >
           重新加载界面
-        </button>
-        <button
+        </Button>
+        <Button
           className="quiet"
-          disabled={busy || checking}
+          pending={Boolean(busy || checking)}
           onClick={() => run(() => window.shell.request("application.check"))}
         >
           检查完整应用更新
-        </button>
+        </Button>
       </div>
     </section>
   );
