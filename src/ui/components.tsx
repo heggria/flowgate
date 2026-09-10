@@ -245,18 +245,21 @@ function placePopover(
   const width = Math.min(Math.max(rect.width, minWidth), innerWidth - edge * 2);
   const below = Math.max(0, innerHeight - rect.bottom - edge - gap);
   const above = Math.max(0, rect.top - edge - gap);
-  const upward = below < Math.min(230, maxHeight) && above > below;
-  const height = Math.min(
-    maxHeight,
-    Math.max(above, below),
-    innerHeight - edge * 2,
-  );
+  // Measure the menu, then constrain it to the chosen side. Using the larger
+  // side's height while positioning below can push the menu over its trigger.
+  const preferredLeft = alignEnd ? rect.right - width : rect.left;
+  const alignedLeft =
+    preferredLeft + width > innerWidth - edge
+      ? rect.right - width
+      : preferredLeft;
   Object.assign(popup.style, {
     width: `${width}px`,
-    maxHeight: `${height}px`,
-    left: `${Math.max(edge, Math.min(alignEnd ? rect.right - width : rect.left, innerWidth - width - edge))}px`,
+    maxHeight: `${Math.min(maxHeight, innerHeight - edge * 2)}px`,
+    left: `${Math.max(edge, Math.min(alignedLeft, innerWidth - width - edge))}px`,
   });
-  popup.style.setProperty("--options-height", `${Math.max(24, height - 52)}px`);
+  const desiredHeight = popup.getBoundingClientRect().height;
+  const upward = desiredHeight > below && above > below;
+  popup.style.maxHeight = `${Math.min(maxHeight, upward ? above : below)}px`;
   const actualHeight = popup.getBoundingClientRect().height;
   popup.style.top = `${Math.max(edge, Math.min(upward ? rect.top - actualHeight - gap : rect.bottom + gap, innerHeight - actualHeight - edge))}px`;
 }
@@ -641,14 +644,14 @@ export function Combobox({
       ),
     );
     popover.current.showPopover();
-    placePopover(button.current, popover.current, 280, 316);
+    placePopover(button.current, popover.current, 0, 316);
     placement.current = button.current.getBoundingClientRect();
     setOpen(true);
     input.current?.focus({ preventScroll: true });
   };
   useLayoutEffect(() => {
     if (open && button.current && popover.current) {
-      placePopover(button.current, popover.current, 280, 316);
+      placePopover(button.current, popover.current, 0, 316);
       placement.current = button.current.getBoundingClientRect();
     }
   }, [open, query, options.length]);
