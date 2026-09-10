@@ -540,6 +540,7 @@ export function Combobox({
   const button = useRef<HTMLButtonElement>(null),
     popover = useRef<HTMLDivElement>(null),
     input = useRef<HTMLInputElement>(null);
+  const placement = useRef<DOMRect | null>(null);
   const [open, setOpen] = useState(false),
     [query, setQuery] = useState(""),
     [active, setActive] = useState(0);
@@ -569,18 +570,31 @@ export function Combobox({
     );
     popover.current.showPopover();
     placePopover(button.current, popover.current, 280, 316);
+    placement.current = button.current.getBoundingClientRect();
     setOpen(true);
     input.current?.focus({ preventScroll: true });
   };
   useLayoutEffect(() => {
-    if (open && button.current && popover.current)
+    if (open && button.current && popover.current) {
       placePopover(button.current, popover.current, 280, 316);
+      placement.current = button.current.getBoundingClientRect();
+    }
   }, [open, query, options.length]);
   useEffect(() => {
     if (!open) return;
     const close = () => dismiss(false);
     const scroll = (event: Event) => {
-      if (!popover.current?.contains(event.target as Node)) close();
+      if (popover.current?.contains(event.target as Node)) return;
+      const rect = button.current?.getBoundingClientRect(),
+        previous = placement.current;
+      // A scroll queued before opening must not dismiss a correctly placed popup.
+      if (
+        !rect ||
+        !previous ||
+        rect.top !== previous.top ||
+        rect.left !== previous.left
+      )
+        close();
     };
     window.addEventListener("resize", close);
     window.addEventListener("scroll", scroll, true);
@@ -720,6 +734,7 @@ export function ActionMenu({
 }) {
   const ref = useRef<HTMLDetailsElement>(null),
     popup = useRef<HTMLDivElement>(null);
+  const placement = useRef<DOMRect | null>(null);
   const pendingDirection = useRef<"first" | "last">("first");
   const [open, setOpen] = useState(false);
   const close = (restore = false) => {
@@ -732,7 +747,18 @@ export function ActionMenu({
     if (!open) return;
     const resize = () => close();
     const scroll = (event: Event) => {
-      if (!popup.current?.contains(event.target as Node)) close();
+      if (popup.current?.contains(event.target as Node)) return;
+      const rect = ref.current
+          ?.querySelector("summary")
+          ?.getBoundingClientRect(),
+        previous = placement.current;
+      if (
+        !rect ||
+        !previous ||
+        rect.top !== previous.top ||
+        rect.left !== previous.left
+      )
+        close();
     };
     window.addEventListener("resize", resize);
     window.addEventListener("scroll", scroll, true);
@@ -756,6 +782,9 @@ export function ActionMenu({
             320,
             true,
           );
+          placement.current = ref.current
+            .querySelector("summary")!
+            .getBoundingClientRect();
           setOpen(true);
           const buttons = popup.current.querySelectorAll<HTMLButtonElement>(
             "button:not(:disabled)",

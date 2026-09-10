@@ -219,8 +219,22 @@ try {
   await nav("设置");
   const choice = p.locator(".selecttrigger").first();
   await choice.click();
+  await p.evaluate(() => document.dispatchEvent(new Event("scroll")));
+  assert.equal(
+    await choice.getAttribute("aria-expanded"),
+    "true",
+    "queued scroll without anchor movement keeps popup open",
+  );
   const input = p.locator(".selectsearch input");
   await input.fill("test");
+  await p.evaluate(
+    () =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve)),
+      ),
+  );
+  await focus(input);
+  assert.equal(await choice.getAttribute("aria-expanded"), "true");
   for (const key of ["Home", "End"])
     assert.equal(
       await input.evaluate((el, key) => {
