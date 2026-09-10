@@ -38,6 +38,9 @@ export function useDraft<T extends object>(key: string, initial: T) {
     const next = { ...latest.current, ...patch };
     latest.current = next;
     setValue(next);
+    window.dispatchEvent(
+      new CustomEvent("flowgate:draft", { detail: { key, value: next } }),
+    );
     void window.shell
       .request("ui.draft.set", { key, value: next })
       .then(() => setError(""))
@@ -45,6 +48,9 @@ export function useDraft<T extends object>(key: string, initial: T) {
   };
   const clear = async (next: T) => {
     await window.shell.request("ui.draft.set", { key, value: null });
+    window.dispatchEvent(
+      new CustomEvent("flowgate:draft", { detail: { key, value: null } }),
+    );
     latest.current = next;
     setValue(next);
     setError("");

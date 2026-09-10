@@ -87,7 +87,7 @@ try {
     0,
     "resource list does not expose creation form by default",
   );
-  await p.getByRole("button", { name: "添加订阅", exact: true }).click();
+  await p.getByRole("button", { name: "导入资源", exact: true }).click();
   let dialog = p.getByRole("dialog");
   assert.equal(
     await dialog
@@ -131,7 +131,7 @@ try {
   checks.push(
     "compact subscription dialog, local HTTPS validation, actual HTTPS import with saved source name",
   );
-  await p.getByRole("button", { name: "添加订阅", exact: true }).click();
+  await p.getByRole("button", { name: "导入资源", exact: true }).click();
   dialog = p.getByRole("dialog");
   await dialog
     .getByRole("textbox", { name: "订阅链接", exact: true })
@@ -239,7 +239,7 @@ try {
   await p.keyboard.press("Escape");
   await p
     .locator(".rulerow")
-    .getByRole("button", { name: "编辑", exact: true })
+    .getByRole("button", { name: /^编辑规则 / })
     .click();
   await p.getByLabel("匹配内容", { exact: true }).fill("modified.example");
   await p.keyboard.press("Escape");
@@ -248,7 +248,7 @@ try {
   await p.keyboard.press("Escape");
   await p
     .locator(".rulerow")
-    .getByRole("button", { name: "编辑", exact: true })
+    .getByRole("button", { name: /^编辑规则 / })
     .click();
   await waitInput("modified.example");
   await p
@@ -289,7 +289,7 @@ try {
   await p.screenshot({ path: join(evidence, "settings-dark.png") });
   await p.getByRole("button", { name: "节点与订阅", exact: false }).click();
   await p.screenshot({ path: join(evidence, "nodes-dark.png") });
-  await p.getByRole("button", { name: "添加订阅", exact: true }).click();
+  await p.getByRole("button", { name: "导入资源", exact: true }).click();
   await p.screenshot({ path: join(evidence, "subscription-dark.png") });
   await p.keyboard.press("Escape");
   await app.evaluate(({ BrowserWindow }) =>

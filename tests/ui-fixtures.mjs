@@ -4,10 +4,11 @@ export async function openNodeImport(page) {
     exact: true,
   });
   if (!(await text.isVisible())) {
-    await page
-      .getByRole("button", { name: /添加订阅/ })
-      .first()
-      .click();
+    if (!(await page.getByRole("dialog").isVisible()))
+      await page
+        .getByRole("button", { name: /导入资源/ })
+        .first()
+        .click();
     await page.getByRole("button", { name: "配置文本", exact: true }).click();
   }
   await text.waitFor();

@@ -6,7 +6,7 @@ FlowGate can use manual proxy, system proxy and TUN on the developer's own Mac w
 
 Use the versions in `.node-version` and `package.json` on Apple Silicon macOS. Install Apple's Command Line Tools, then run `npm ci`, `npm run setup:kernel`, and `npm run build`. `npm start` launches the development application. To build a standalone app, set `FLOWGATE_PACKAGE_DIR` to a new output path and run `npm run package:mac`.
 
-In Settings, open **系统辅助服务** and select **安装系统辅助服务**. Approve the macOS administrator dialog locally. FlowGate verifies the real helper connection before reporting installation success. No Apple account or paid certificate is used. Disconnect the proxy before updating or uninstalling the helper.
+In Settings under **网络接入**, select **安装系统辅助服务**. Approve the macOS administrator dialog locally. FlowGate verifies the real helper connection before reporting installation success. No Apple account or paid certificate is used. Disconnect the proxy before updating or uninstalling the helper.
 
 The approved bridge code hash is tied to this build and user. After rebuilding native components, use **更新辅助服务** to approve the new build. Installing a different build replaces the previously approved local build. Other local users and unapproved bridge binaries are rejected.
 

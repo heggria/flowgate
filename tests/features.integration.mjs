@@ -56,6 +56,7 @@ try {
     app.emit("open-url", { preventDefault() {} }, "flowgate://open/rules"),
   );
   await page.getByRole("heading", { name: "分流规则", exact: true }).waitFor();
+  await page.getByRole("button", { name: "管理规则集", exact: true }).click();
   const source = page.locator("section").filter({
     has: page.getByRole("heading", { name: /^规则集来源/ }),
   });

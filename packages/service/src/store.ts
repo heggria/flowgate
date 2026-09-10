@@ -1,6 +1,6 @@
 import { open, readFile, rename, mkdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
-import type { Configuration, Operation } from "../../contracts/src/index";
+import type { AppliedConnection, Operation } from "../../contracts/src/index";
 import { extensionPreferences } from "../../contracts/src/extensions";
 import {
   initialConfiguration,
@@ -21,6 +21,7 @@ export class StateStore {
   extensionPreferences: Record<string, boolean> = {};
   extensionRevision = 0;
   configuration = initialConfiguration();
+  appliedConnection?: AppliedConnection;
   operations: Operation[] = [];
   private lock?: Awaited<ReturnType<typeof open>>;
   private queue: Promise<unknown> = Promise.resolve();
@@ -54,6 +55,7 @@ export class StateStore {
         data.configuration.schema = 2;
       }
       this.configuration = data.configuration;
+      this.appliedConnection = data.appliedConnection;
       this.operations = data.operations ?? [];
       this.extensionPreferences = extensionPreferences(
         data.extensionPreferences,
@@ -79,6 +81,7 @@ export class StateStore {
     if (!this.lock) throw new Error("No writer lease");
     await atomicWrite(join(this.directory, "state.json"), {
       configuration: this.configuration,
+      appliedConnection: this.appliedConnection,
       operations: this.operations.slice(-200),
       extensionPreferences: this.extensionPreferences,
       extensionRevision: this.extensionRevision,

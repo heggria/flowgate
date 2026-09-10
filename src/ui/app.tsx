@@ -1,5 +1,5 @@
 import { useAppearance } from "./appearance";
-import { Button } from "./components";
+import { Button, InfoTip } from "./components";
 import React, {
   useState,
   useEffect,
@@ -38,6 +38,39 @@ function App({ routes }: { routes: RouteContribution[] }) {
     [notice, setNotice] = useState(""),
     [query, setQuery] = useState(""),
     [theme, setTheme] = useAppearance();
+  const [settingsDraft, setSettingsDraft] = useState<{
+    port?: string;
+    dns?: string;
+  } | null>(null);
+  useEffect(() => {
+    let active = true,
+      updated = false;
+    const change = (event: Event) => {
+      const draft = (event as CustomEvent).detail;
+      if (draft?.key === "settings") {
+        updated = true;
+        setSettingsDraft(draft.value);
+      }
+    };
+    window.addEventListener("flowgate:draft", change);
+    void window.shell
+      .request("ui.draft.get", { key: "settings" })
+      .then((value) => {
+        if (active && !updated) setSettingsDraft(value as typeof settingsDraft);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+      window.removeEventListener("flowgate:draft", change);
+    };
+  }, []);
+  const unsavedSettings = Boolean(
+    snapshot &&
+    settingsDraft &&
+    (settingsDraft.port !==
+      String(snapshot.configuration.settings.listenPort) ||
+      settingsDraft.dns !== snapshot.configuration.settings.dnsServer),
+  );
   const cancelable = useSyncExternalStore(subscribePending, pendingCount);
   const search = useRef<HTMLInputElement>(null);
   const inFlight = useRef(false);
@@ -130,7 +163,68 @@ function App({ routes }: { routes: RouteContribution[] }) {
   const commands = runtime.entries
     .filter((entry) => entry.kind === "command")
     .map((entry) => entry.value as CommandContribution);
+  const matches = (label: string, id = "") => {
+    const synonyms: Record<string, string> = {
+      overview: "首页 home status 状态",
+      nodes: "代理 proxy subscription 导入 订阅 server",
+      rules: "分流 policy route routing",
+      connections: "流量 traffic 请求",
+      network: "vpn tun coexist 共存",
+      activity: "日志 log error 错误 失败",
+      extensions: "插件 plugin",
+      settings: "偏好 preference dns port 端口 update 更新",
+    };
+    return `${label} ${id} ${synonyms[id] ?? ""}`
+      .toLowerCase()
+      .includes(query.trim().toLowerCase());
+  };
+  const objectResults =
+    query.trim() && snapshot
+      ? [
+          ...snapshot.configuration.nodes
+            .filter((n) =>
+              `${n.name} ${n.server}`
+                .toLowerCase()
+                .includes(query.trim().toLowerCase()),
+            )
+            .slice(0, 5)
+            .map((n) => ({
+              id: n.id,
+              label: n.name,
+              page: "nodes",
+              query: n.name,
+            })),
+          ...snapshot.configuration.rules
+            .filter((r) =>
+              r.value.toLowerCase().includes(query.trim().toLowerCase()),
+            )
+            .slice(0, 5)
+            .map((r) => ({
+              id: r.id,
+              label: r.value,
+              page: "rules",
+              query: r.value,
+            })),
+        ]
+      : [];
+  const openObject = (entry: (typeof objectResults)[number]) => {
+    sessionStorage.setItem(`flowgate.search.${entry.page}`, entry.query);
+    setPage(entry.page);
+    setQuery("");
+    window.dispatchEvent(new CustomEvent("flowgate:search", { detail: entry }));
+  };
   const route = routes.find((r) => r.id === page) ?? routes[0];
+  const navigate = (id: string) => {
+    if (id === "updates") {
+      setPage("settings");
+      sessionStorage.setItem("flowgate.showUpdates", "1");
+      requestAnimationFrame(() =>
+        document
+          .getElementById("about-updates")
+          ?.scrollIntoView({ block: "start" }),
+      );
+    } else setPage(id);
+  };
   const SelectedPage = route.Component;
   const connected = snapshot?.kernel.status === "running";
   const transitioning =
@@ -174,21 +268,21 @@ function App({ routes }: { routes: RouteContribution[] }) {
             onKeyDown={(e) => {
               if (e.key === "Escape") setQuery("");
               if (e.key === "Enter" && query.trim()) {
-                const first = routes.find((r) => r.label.includes(query));
+                const first = routes.find((r) => matches(r.label, r.id));
                 if (first) {
                   setPage(first.id);
                   setQuery("");
                   search.current?.blur();
                 } else if (snapshot) {
                   const command = commands.find((command) =>
-                    command.label.includes(query),
+                    matches(command.label, command.id),
                   );
                   if (command) {
                     void run(() =>
                       command.execute({ navigate: setPage, snapshot }),
                     );
                     setQuery("");
-                  }
+                  } else if (objectResults[0]) openObject(objectResults[0]);
                 }
               }
             }}
@@ -197,7 +291,7 @@ function App({ routes }: { routes: RouteContribution[] }) {
         </div>
         <nav aria-label="主导航">
           {routes
-            .filter((r) => r.label.includes(query))
+            .filter((r) => matches(r.label, r.id))
             .map((r) => (
               <Button
                 key={r.id}
@@ -212,6 +306,9 @@ function App({ routes }: { routes: RouteContribution[] }) {
               >
                 <Icon name={r.id} />
                 <span>{r.label}</span>
+                {r.id === "settings" && unsavedSettings ? (
+                  <small className="draftbadge">草稿</small>
+                ) : null}
                 {r.id === "nodes" && snapshot ? (
                   <small>{snapshot.configuration.nodes.length}</small>
                 ) : null}
@@ -219,7 +316,7 @@ function App({ routes }: { routes: RouteContribution[] }) {
             ))}
           {query && snapshot
             ? commands
-                .filter((command) => command.label.includes(query))
+                .filter((command) => matches(command.label, command.id))
                 .map((command) => (
                   <Button
                     key={command.id}
@@ -236,9 +333,21 @@ function App({ routes }: { routes: RouteContribution[] }) {
                   </Button>
                 ))
             : null}
+          {objectResults.map((entry) => (
+            <Button
+              key={`${entry.page}-${entry.id}`}
+              className="nav objectresult"
+              title={entry.label}
+              onClick={() => openObject(entry)}
+            >
+              <Icon name={entry.page} />
+              <span>{entry.label}</span>
+            </Button>
+          ))}
           {query &&
-          !routes.some((r) => r.label.includes(query)) &&
-          !commands.some((command) => command.label.includes(query)) ? (
+          !objectResults.length &&
+          !routes.some((r) => matches(r.label, r.id)) &&
+          !commands.some((command) => matches(command.label, command.id)) ? (
             <p className="navempty">没有匹配功能</p>
           ) : null}
         </nav>
@@ -300,8 +409,36 @@ function App({ routes }: { routes: RouteContribution[] }) {
           <div className="configurationbar" role="status">
             <div>
               <strong>有配置等待生效</strong>
-              <span>当前连接仍使用上一次配置。应用后会重新建立连接。</span>
+              {snapshot?.appliedConnection?.selectedNode !==
+              snapshot?.configuration.settings.selectedNode ? (
+                <span>
+                  当前{" "}
+                  {snapshot?.appliedConnection?.outletName ??
+                    "旧配置（出口待确认）"}{" "}
+                  → 待应用{" "}
+                  {snapshot
+                    ? (snapshot.configuration.nodes.find(
+                        (n) =>
+                          n.id === snapshot.configuration.settings.selectedNode,
+                      )?.name ??
+                      snapshot.configuration.groups?.find(
+                        (g) =>
+                          g.id === snapshot.configuration.settings.selectedNode,
+                      )?.name ??
+                      snapshot.configuration.externalNetworks?.find(
+                        (n) =>
+                          n.id === snapshot.configuration.settings.selectedNode,
+                      )?.name ??
+                      (snapshot.configuration.settings.selectedNode === "direct"
+                        ? "直连"
+                        : snapshot.configuration.settings.selectedNode))
+                    : ""}
+                </span>
+              ) : null}
             </div>
+            <InfoTip label="应用配置说明">
+              {`已保存修订 ${snapshot?.configuration.revision} · 当前生效修订 ${snapshot?.kernel.appliedRevision ?? "未知"}。应用会重新建立连接，并包含所有已保存的规则、接入方式和端口更改。`}
+            </InfoTip>
             <Button
               className="primary"
               pending={Boolean(busy)}
@@ -329,7 +466,7 @@ function App({ routes }: { routes: RouteContribution[] }) {
                 snapshot={snapshot}
                 save={save}
                 run={run}
-                navigate={setPage}
+                navigate={navigate}
                 busy={busy}
               />
             </fieldset>

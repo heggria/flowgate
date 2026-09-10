@@ -403,6 +403,14 @@ export function compileConfiguration(c: Configuration) {
   };
 }
 export function explainRoute(c: Configuration, target: string) {
+  target = target.trim().toLowerCase().replace(/\.$/, "");
+  if (!target || /[\s:/?#@]/.test(target))
+    throw new Error("请输入域名，例如 example.com；不要包含协议或路径");
+  try {
+    target = new URL(`http://${target}`).hostname;
+  } catch {
+    throw new Error("域名格式无效，请检查输入");
+  }
   const hit = c.rules.find((r) =>
     r.kind === "domain"
       ? target === r.value
@@ -415,6 +423,7 @@ export function explainRoute(c: Configuration, target: string) {
   );
   return {
     target,
+    revision: c.revision,
     rule: hit ?? null,
     outbound: hit?.outbound ?? c.settings.finalOutbound,
     applied: false,

@@ -133,8 +133,41 @@ final class NetworkEngine {
         let launched = try JSONSerialization.jsonObject(with: Data(contentsOf:path)) as? [String:Any]
         let inbound = (launched?["inbounds"] as? [[String:Any]])?.first
         tunInterface = inbound?["type"] as? String == "tun" ? inbound?["interface_name"] as? String : nil
-        do { try startKernelWatchdog(kernel: process.processIdentifier, directory: directory, privileged: privileged) } catch { process.terminate(); throw error }; journal.record.kernelPID=process.processIdentifier;journal.record.kernelBirth=processBirth(process.processIdentifier);try journal.persist();Thread.sleep(forTimeInterval: 0.25)
-        guard process.isRunning else { throw NSError(domain: "内核启动失败，可能监听端口冲突", code: 27) }
+        do { try startKernelWatchdog(kernel: process.processIdentifier, directory: directory, privileged: privileged) } catch { process.terminate(); throw error }
+        journal.record.kernelPID=process.processIdentifier;journal.record.kernelBirth=processBirth(process.processIdentifier);try journal.persist()
+        // A live process can still be starting. Do not publish an applied revision
+        // or change system proxy settings until the local listeners are ready.
+        var ports = [controlPort]
+        if inbound?["type"] as? String == "mixed", let port = inbound?["listen_port"] as? Int { ports.append(port) }
+        let deadline = ProcessInfo.processInfo.systemUptime + 3
+        while process.isRunning && ProcessInfo.processInfo.systemUptime < deadline {
+            if ports.allSatisfy(loopbackListenerReady) { return }
+            Thread.sleep(forTimeInterval: 0.025)
+        }
+        throw NSError(domain: process.isRunning ? "内核启动超时，本地监听尚未就绪" : "内核启动失败，可能监听端口冲突", code: 27)
+    }
+    private func loopbackListenerReady(_ port: Int) -> Bool {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { Darwin.close(fd) }
+        guard fcntl(fd, F_SETFL, O_NONBLOCK) == 0 else { return false }
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_addr.s_addr = inet_addr("127.0.0.1")
+        address.sin_port = UInt16(port).bigEndian
+        let result = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        if result == 0 { return true }
+        guard errno == EINPROGRESS else { return false }
+        var event = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
+        guard poll(&event, 1, 25) > 0 else { return false }
+        var error: Int32 = 0
+        var length = socklen_t(MemoryLayout<Int32>.size)
+        return getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &length) == 0 && error == 0
     }
     func request(_ data: Data) -> Data {
         var id = ""

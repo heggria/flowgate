@@ -12,10 +12,8 @@ import { networkConflicts } from "../../domain/src/network-conflicts";
 import { randomUUID } from "node:crypto";
 import type {
   AppSnapshot,
-  Configuration,
   NativePort,
   NetworkState,
-  NodeConfig,
   Operation,
   KernelState,
   Rule,
@@ -107,6 +105,11 @@ export class ServiceCore {
   private networkCoordination: Promise<unknown> = Promise.resolve();
   private measurements = new Map<string, NodeMeasurement>();
   private measuring = new Map<string, AbortController>();
+  private invalidateMeasurements() {
+    for (const controller of this.measuring.values()) controller.abort();
+    this.measuring.clear();
+    this.measurements.clear();
+  }
   private moduleInfo: AppSnapshot["modules"] = [];
   constructor(
     readonly store: StateStore,
@@ -204,8 +207,7 @@ export class ServiceCore {
     const kernel = await this.native.status();
     const own = kernel.tunInterface;
     if (networkPath(previous, own) === networkPath(state, own)) return;
-    for (const controller of this.measuring.values()) controller.abort();
-    this.measurements.clear();
+    this.invalidateMeasurements();
     if (kernel.status !== "running" || this.hasUnknownNative()) return;
     if (kernel.appliedRevision !== this.store.configuration.revision) {
       state.warnings.push(
@@ -330,6 +332,12 @@ export class ServiceCore {
       configuration: visible,
       traffic: this.telemetry?.snapshot(),
       kernel,
+      appliedConnection:
+        kernel.status === "running" &&
+        kernel.appliedRevision === this.store.appliedConnection?.revision &&
+        kernel.operationId === this.store.appliedConnection?.operationId
+          ? this.store.appliedConnection
+          : undefined,
       networkConflicts: networkConflicts(
         this.store.configuration,
         this.network,
@@ -368,6 +376,14 @@ export class ServiceCore {
         throw new Error("节点不存在");
       if (this.measuring.has(id) || this.measuring.size >= 3)
         throw new Error("已有检测正在进行");
+      if (
+        this.store.operations.some(
+          (operation) =>
+            ["proxy.connect", "proxy.disconnect"].includes(operation.kind) &&
+            ["pending", "unknown"].includes(operation.state),
+        )
+      )
+        throw new Error("连接正在切换，请稍后检测");
       const revision = this.store.configuration.revision;
       const controller = new AbortController();
       this.measuring.set(id, controller);
@@ -381,6 +397,7 @@ export class ServiceCore {
           !control
         )
           throw new Error("请先启动代理并应用当前配置");
+        controller.signal.throwIfAborted();
         const result = await measureOutbound(
           control,
           id,
@@ -388,19 +405,22 @@ export class ServiceCore {
             ? AbortSignal.any([signal, controller.signal])
             : controller.signal,
         );
+        controller.signal.throwIfAborted();
         if (this.store.configuration.revision !== revision)
           throw new Error("配置已变化，请重新检测");
         this.measurements.set(id, result);
         return result;
       } catch (error) {
-        this.measurements.set(id, {
-          id,
-          state: "failed",
-          message: error instanceof Error ? error.message : "检测失败",
-        });
+        if (this.measuring.get(id) === controller)
+          this.measurements.set(id, {
+            id,
+            state: "failed",
+            measuredAt: new Date().toISOString(),
+            message: error instanceof Error ? error.message : "检测失败",
+          });
         throw error;
       } finally {
-        this.measuring.delete(id);
+        if (this.measuring.get(id) === controller) this.measuring.delete(id);
       }
     }
     if (method === "network.refresh") {
@@ -556,13 +576,32 @@ export class ServiceCore {
             if (blocked.length)
               throw new Error(blocked.map((c) => c.message).join("\n"));
           }
+          const compiled = await this.native.compile(this.store.configuration);
+          this.invalidateMeasurements();
           await this.native.apply(
-            await this.native.compile(this.store.configuration),
+            compiled,
             this.store.configuration.revision,
             operationId,
             this.store.configuration.settings.mode,
           );
+          const c = this.store.configuration,
+            id = c.settings.selectedNode;
+          this.store.appliedConnection = {
+            revision: c.revision,
+            operationId,
+            selectedNode: id,
+            outletName:
+              c.nodes.find((n) => n.id === id)?.name ??
+              c.groups?.find((g) => g.id === id)?.name ??
+              c.externalNetworks?.find((n) => n.id === id)?.name ??
+              (id === "direct" ? "直连" : id),
+            mode: c.settings.mode,
+            listenPort: c.settings.listenPort,
+            finalOutbound: c.settings.finalOutbound,
+            ruleCount: c.rules.length,
+          };
         } else if (method === "proxy.disconnect") {
+          this.invalidateMeasurements();
           await this.native.stop(operationId);
         } else {
           const next = structuredClone(this.store.configuration);
@@ -783,7 +822,7 @@ export class ServiceCore {
     this.subscriptionRefresh.stop();
     this.subscriptions.pause();
     this.networkObserver.stop();
-    for (const controller of this.measuring.values()) controller.abort();
+    this.invalidateMeasurements();
     await this.subscriptionRefresh.drain();
     await this.store.drain();
     try {
@@ -833,7 +872,7 @@ export class ServiceCore {
     this.store.pause();
     this.lifecycle = "draining";
     this.networkObserver.stop();
-    for (const controller of this.measuring.values()) controller.abort();
+    this.invalidateMeasurements();
   }
   async resume() {
     await this.store.drain();

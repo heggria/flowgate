@@ -38,7 +38,7 @@ try {
       theme,
     );
     await nav("节点与订阅");
-    const add = p.getByRole("button", { name: "添加订阅", exact: true });
+    const add = p.getByRole("button", { name: "导入资源", exact: true });
     // Explicit CSS probes ensure every action family is covered even when the route has no disabled action.
     for (const className of [
       "primary",

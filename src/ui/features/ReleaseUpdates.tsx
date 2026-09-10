@@ -5,6 +5,7 @@ import {
   Disclosure,
   StatusBadge,
   TaskError,
+  InfoTip,
 } from "../components";
 import { useEffect, useState } from "react";
 import type { ReleaseSet } from "../../../packages/contracts/src/index";
@@ -54,17 +55,16 @@ export function ReleaseUpdates({
   return (
     <section className="settingsgroup releaseupdates">
       <div className="groupheading">
-        <h2>官方扩展更新</h2>
-        <p className="hint">
-          内置扩展随经过验证的版本组合更新。核心组件和依赖保持兼容，原生组件通过完整应用更新。
-        </p>
+        <div className="headinglabel">
+          <h2>关于与更新</h2>
+          <InfoTip label="更新范围说明">
+            内置扩展随经过验证的版本组合更新；原生组件通过完整应用更新。
+          </InfoTip>
+        </div>
       </div>
       <div className="settingssurface">
-        <SettingRow
-          label="当前版本"
-          description={`应用 ${window.shell.version}`}
-        >
-          <StatusBadge wrap>{releaseStatus?.release ?? "读取中"}</StatusBadge>
+        <SettingRow label="当前版本">
+          <StatusBadge>{window.shell.version}</StatusBadge>
         </SettingRow>
         {releaseStatus && !releaseStatus.configured ? (
           <p className="hint">官方更新源尚未配置。</p>
@@ -84,7 +84,7 @@ export function ReleaseUpdates({
         ) : null}
         <SettingRow
           label="更新通道"
-          description="预览版用于提前体验新功能。"
+
           htmlFor="update-channel"
         >
           <Combobox
@@ -132,11 +132,12 @@ export function ReleaseUpdates({
               setUpdateMessage(
                 error instanceof Error ? error.message : "更新检查失败",
               );
-              throw error;
             } finally {
               setChecking(false);
               setReleaseStatus(
-                (await window.shell.request("release.status")) as any,
+                (await window.shell
+                  .request("release.status")
+                  .catch(() => releaseStatus)) as any,
               );
             }
           })
@@ -145,11 +146,12 @@ export function ReleaseUpdates({
         {checking ? "检查中…" : "检查更新"}
       </Button>
       <Disclosure title="组件版本">
+        <p>版本组合：{releaseStatus?.release ?? "读取中"}</p>
         <pre>{JSON.stringify(releaseStatus?.versions ?? {}, null, 2)}</pre>
       </Disclosure>
       {candidate ? (
         <section aria-label="候选版本详情" className="extensioncandidate">
-          <h3>{candidate.id}</h3>
+          <h3>可用更新</h3>
           <p>
             {candidate.channel === "stable" ? "稳定版" : "预览版"} ·
             协议兼容检查已通过
@@ -199,7 +201,7 @@ export function ReleaseUpdates({
             )
           }
         >
-          应用 {candidate.id}
+          应用更新
         </Button>
       ) : null}
       <div className="sectionactions">
