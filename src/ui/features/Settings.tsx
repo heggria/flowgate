@@ -1,4 +1,4 @@
-import { Disclosure } from "../components";
+import { Toggle, Button, Disclosure } from "../components";
 import { useState } from "react";
 import { useDraft } from "../drafts";
 import { ReleaseUpdates } from "./ReleaseUpdates";
@@ -48,9 +48,9 @@ export function Settings({
               }
               key={mode.id}
             >
-              <input
+              <Toggle
                 type="radio"
-                disabled={busy || task.pending}
+                pending={busy || task.pending}
                 name="connection-mode"
                 value={mode.id}
                 checked={config.settings.mode === mode.id}
@@ -80,12 +80,12 @@ export function Settings({
             description="使用上一次保存的配置，自动开始连接。"
             htmlFor="auto-connect"
           >
-            <input
+            <Toggle
               id="auto-connect"
               className="switchinput"
               type="checkbox"
               role="switch"
-              disabled={busy || task.pending}
+              pending={busy || task.pending}
               checked={config.settings.autoConnect}
               onChange={(e) => {
                 void save({
@@ -161,10 +161,10 @@ export function Settings({
             {dirty || task.pending ? (
               <div className="settingssave">
                 <span>有未保存的更改</span>
-                <button
+                <Button
                   type="button"
                   className="quiet"
-                  disabled={task.pending}
+                  pending={Boolean(task.pending)}
                   onClick={() => {
                     void draft.clear({
                       dns: config.settings.dnsServer,
@@ -173,13 +173,14 @@ export function Settings({
                   }}
                 >
                   放弃更改
-                </button>
-                <button
+                </Button>
+                <Button
                   className="primary"
-                  disabled={!draft.ready || task.pending}
+                  pending={task.pending}
+                  disabled={!draft.ready}
                 >
                   {task.pending ? "保存中…" : "保存网络设置"}
-                </button>
+                </Button>
               </div>
             ) : notice ? (
               <p className="settingsnotice" role="status">
@@ -193,12 +194,12 @@ export function Settings({
             label="安装系统辅助服务"
             description="为系统代理和 TUN 模式提供所需的权限。"
           >
-            <button
+            <Button
               className="secondary"
               onClick={() => run(() => window.shell.request("helper.install"))}
             >
               安装系统辅助服务
-            </button>
+            </Button>
           </SettingRow>
         </Disclosure>
       </section>

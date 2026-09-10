@@ -1,4 +1,4 @@
-import { EmptyState, TaskError as NetworkError } from "../components";
+import { Button, EmptyState, TaskError as NetworkError } from "../components";
 import { useState } from "react";
 import {
   Combobox,
@@ -28,17 +28,17 @@ export function Network({ snapshot, save, run, navigate }: FeatureProps) {
         title="网络环境"
         description="观察本机网络，将外部连接接入分流。"
       >
-        <button className="primary" onClick={() => setAdding(true)}>
+        <Button className="primary" onClick={() => setAdding(true)}>
           ＋ 绑定网络
-        </button>
+        </Button>
       </PageHeader>
       <NetworkError message={draft.error} />
       <p>
         HTTP / SOCKS 外部代理可在节点页导入。已有网络接口可作为独立的 TCP / UDP
         出口。
-        <button className="textbutton" onClick={() => navigate("nodes")}>
+        <Button className="textbutton" onClick={() => navigate("nodes")}>
           前往导入外部代理 →
-        </button>
+        </Button>
       </p>
       {snapshot.networkConflicts?.map((issue) => (
         <p
@@ -67,7 +67,7 @@ export function Network({ snapshot, save, run, navigate }: FeatureProps) {
               <strong>
                 {proxy.kind.toUpperCase()} · {proxy.host}:{proxy.port}
               </strong>
-              <button
+              <Button
                 className="secondary"
                 disabled={
                   proxy.port === c.settings.listenPort &&
@@ -89,7 +89,7 @@ export function Network({ snapshot, save, run, navigate }: FeatureProps) {
                 }
               >
                 添加为可选出口
-              </button>
+              </Button>
             </div>
           ))}
         </section>

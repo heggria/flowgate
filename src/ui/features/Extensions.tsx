@@ -1,4 +1,6 @@
 import {
+  Button,
+  Toggle,
   PageHeader,
   SearchField,
   EmptyState,
@@ -127,7 +129,7 @@ export function Extensions({ snapshot, run, busy }: FeatureProps) {
           <Icon name={entry.required ? "extensions" : "network"} size={20} />
         </span>
         <div className="extensioncopy">
-          <button
+          <Button
             className="extensionname"
             aria-label={`查看 ${entry.name} 详情`}
             aria-expanded={selected === entry.id}
@@ -138,7 +140,7 @@ export function Extensions({ snapshot, run, busy }: FeatureProps) {
           >
             <h3>{entry.name}</h3>
             <Icon name="chevron" size={12} />
-          </button>
+          </Button>
           <p>{summaries[entry.id] ?? entry.description}</p>
           {unhealthy(entry) || changing ? (
             <span className="extensionstate" role="status">
@@ -160,25 +162,24 @@ export function Extensions({ snapshot, run, busy }: FeatureProps) {
           ) : (
             <>
               {entry.status === "failed" ? (
-                <button
+                <Button
                   className="quiet"
-                  disabled={locked}
+                  pending={locked}
                   onClick={() => void change(entry, true)}
                 >
                   重试启用
-                </button>
+                </Button>
               ) : null}
               <span className="extensionpreference">
                 {entry.desiredEnabled ? "已启用" : "已停用"}
               </span>
-              <input
+              <Toggle
                 type="checkbox"
                 role="switch"
                 className="switchinput"
                 aria-label={`启用 ${entry.name}`}
                 checked={entry.desiredEnabled}
-                aria-disabled={locked}
-                aria-busy={changing}
+                pending={locked}
                 onChange={() => {
                   if (!locked) void change(entry);
                 }}
@@ -195,13 +196,13 @@ export function Extensions({ snapshot, run, busy }: FeatureProps) {
         title="扩展"
         description="按需开启附加能力，让 FlowGate 更适合你。"
       >
-        <button
+        <Button
           className="secondary"
           aria-expanded={showUpdates}
           onClick={() => setShowUpdates((value) => !value)}
         >
           管理更新
-        </button>
+        </Button>
       </PageHeader>
       {showUpdates ? (
         <ReleaseUpdates run={run} busy={busy} extensions={entries} />
@@ -230,9 +231,9 @@ export function Extensions({ snapshot, run, busy }: FeatureProps) {
               title="没有匹配的扩展"
               description="试试其他关键词。"
             >
-              <button className="quiet" onClick={() => setQuery("")}>
+              <Button className="quiet" onClick={() => setQuery("")}>
                 清除筛选
-              </button>
+              </Button>
             </EmptyState>
           ) : (
             <>
@@ -245,7 +246,7 @@ export function Extensions({ snapshot, run, busy }: FeatureProps) {
               </p>
               <div className="extensionlist">{optional.map(row)}</div>
               <section className="extensioncore">
-                <button
+                <Button
                   className="extensioncoretoggle"
                   aria-expanded={showCore || coreError || !!query}
                   onClick={() => setShowCore((value) => !value)}
@@ -256,7 +257,7 @@ export function Extensions({ snapshot, run, busy }: FeatureProps) {
                     {core.length} 项 ·{" "}
                     {coreError ? "需要处理" : "由 FlowGate 自动管理"}
                   </small>
-                </button>
+                </Button>
                 {coreError ? (
                   <p className="taskerror" role="alert">
                     部分核心能力不可用，请查看详情或尝试恢复。
@@ -283,9 +284,9 @@ export function Extensions({ snapshot, run, busy }: FeatureProps) {
             }}
           >
             <div className="extensiondetailheader">
-              <button className="quiet extensionclose" onClick={closeDetail}>
+              <Button className="quiet extensionclose" onClick={closeDetail}>
                 返回扩展列表
-              </button>
+              </Button>
               <small>扩展详情</small>
               <h2 ref={detailHeading} tabIndex={-1}>
                 {detail.name}
@@ -360,9 +361,9 @@ export function Extensions({ snapshot, run, busy }: FeatureProps) {
                   {detail.contributions.includes("command") ? "业务命令" : "无"}
                 </dd>
               </dl>
-              <button
+              <Button
                 className="secondary"
-                disabled={busy}
+                pending={Boolean(busy)}
                 onClick={() =>
                   void run(async () => {
                     const all = (await window.shell.request(
@@ -382,7 +383,7 @@ export function Extensions({ snapshot, run, busy }: FeatureProps) {
                 }
               >
                 读取此扩展诊断
-              </button>
+              </Button>
               {eventOwner === detail.id ? (
                 events.length ? (
                   <ol className="extensionevents">
@@ -417,9 +418,9 @@ export function Extensions({ snapshot, run, busy }: FeatureProps) {
           <p>
             重启扩展宿主会中止正在进行的解析或诊断任务，并重新应用已保存的启用偏好。现有代理转发保持运行。
           </p>
-          <button
+          <Button
             className="secondary"
-            disabled={busy}
+            pending={Boolean(busy)}
             onClick={() =>
               void run(() =>
                 client.request("extensions.restart", {
@@ -429,7 +430,7 @@ export function Extensions({ snapshot, run, busy }: FeatureProps) {
             }
           >
             重启扩展宿主
-          </button>
+          </Button>
         </section>
       ) : null}
     </div>

@@ -1,4 +1,5 @@
 import {
+  Button,
   PageHeader,
   Disclosure,
   EmptyState,
@@ -26,9 +27,9 @@ export function Activity({ snapshot }: FeatureProps) {
         description="查看操作结果，展开详情追踪异常。"
       />
       <Disclosure title="服务诊断">
-        <button
+        <Button
           className="secondary"
-          aria-disabled={task.pending}
+          pending={Boolean(task.pending)}
           aria-busy={task.pending}
           onClick={() =>
             void task.execute(async () => {
@@ -41,7 +42,7 @@ export function Activity({ snapshot }: FeatureProps) {
           }
         >
           {task.pending ? "读取中…" : "读取最近调用"}
-        </button>
+        </Button>
         <TaskError message={task.error} />
         {events
           .slice()

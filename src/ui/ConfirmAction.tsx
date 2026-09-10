@@ -1,5 +1,5 @@
 import { createPortal } from "react-dom";
-import { focusReturnTarget, restoreFocus } from "./components";
+import { Button, focusReturnTarget, restoreFocus } from "./components";
 import { useId, useRef, useState } from "react";
 
 /** Native dialog supplies focus containment, Escape and focus restoration. */
@@ -20,11 +20,12 @@ export function ConfirmAction({
     descriptionId = useId();
   const dialog = useRef<HTMLDialogElement>(null),
     returnTarget = useRef<HTMLElement | null>(null);
+  const active = useRef(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   return (
     <>
-      <button
+      <Button
         className="quiet dangertext"
         disabled={disabled}
         type="button"
@@ -35,7 +36,7 @@ export function ConfirmAction({
         }}
       >
         {label}
-      </button>
+      </Button>
       {createPortal(
         <dialog
           ref={dialog}
@@ -58,18 +59,21 @@ export function ConfirmAction({
               </p>
             ) : null}
             <footer className="dialogfooter">
-              <button
+              <Button
                 autoFocus
                 className="secondary"
-                disabled={pending}
+                pending={Boolean(pending)}
                 onClick={() => dialog.current?.close()}
               >
                 取消
-              </button>
-              <button
+              </Button>
+              <Button
                 className="dangerbutton"
-                disabled={pending}
+                pending={Boolean(pending)}
                 onClick={async () => {
+                  if (active.current) return;
+                  active.current = true;
+                  setError("");
                   setPending(true);
                   try {
                     const result = await onConfirm();
@@ -83,12 +87,13 @@ export function ConfirmAction({
                         : "操作失败，请重试。",
                     );
                   } finally {
+                    active.current = false;
                     setPending(false);
                   }
                 }}
               >
                 {pending ? "处理中…" : `确认${label}`}
-              </button>
+              </Button>
             </footer>
           </div>
         </dialog>,

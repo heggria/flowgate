@@ -1,3 +1,4 @@
+import { Button } from "./components";
 import React, {
   useState,
   useEffect,
@@ -144,14 +145,14 @@ function App({ routes }: { routes: RouteContribution[] }) {
   return (
     <div className="app">
       {cancelable > 0 ? (
-        <button
+        <Button
           className="cancelrequests secondary"
           onClick={() => {
             void cancelPending().catch((error) => setError(String(error)));
           }}
         >
           取消当前请求（{cancelable}）
-        </button>
+        </Button>
       ) : null}
       {notice ? (
         <div className="toast" role="status">
@@ -202,7 +203,7 @@ function App({ routes }: { routes: RouteContribution[] }) {
           {routes
             .filter((r) => r.label.includes(query))
             .map((r) => (
-              <button
+              <Button
                 key={r.id}
                 aria-label={r.label}
                 title={r.label}
@@ -218,16 +219,16 @@ function App({ routes }: { routes: RouteContribution[] }) {
                 {r.id === "nodes" && snapshot ? (
                   <small>{snapshot.configuration.nodes.length}</small>
                 ) : null}
-              </button>
+              </Button>
             ))}
           {query && snapshot
             ? commands
                 .filter((command) => command.label.includes(query))
                 .map((command) => (
-                  <button
+                  <Button
                     key={command.id}
                     className="nav"
-                    disabled={busy}
+                    pending={Boolean(busy)}
                     onClick={() => {
                       void run(() =>
                         command.execute({ navigate: setPage, snapshot }),
@@ -236,7 +237,7 @@ function App({ routes }: { routes: RouteContribution[] }) {
                     }}
                   >
                     {command.label}
-                  </button>
+                  </Button>
                 ))
             : null}
           {query &&
@@ -247,13 +248,13 @@ function App({ routes }: { routes: RouteContribution[] }) {
         </nav>
         <div className="sidebarbottom">
           <span className="version">FlowGate {window.shell.version}</span>
-          <button
+          <Button
             className="iconbutton"
             aria-label={theme === "light" ? "切换深色外观" : "切换浅色外观"}
             onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}
           >
             <Icon name="sun" size={16} />
-          </button>
+          </Button>
         </div>
       </aside>
       <main>
@@ -264,21 +265,22 @@ function App({ routes }: { routes: RouteContribution[] }) {
               <i className={connected ? "dot online" : "dot"} />
               {snapshot ? kernelLabels[snapshot.kernel.status] : "连接服务中"}
             </span>
-            <button
+            <Button
               className="iconbutton"
               aria-label="刷新状态"
               title="刷新网络状态"
-              disabled={busy}
+              pending={Boolean(busy)}
               onClick={() => run(() => client.request("network.refresh"))}
             >
               <Icon name="refresh" size={16} />
-            </button>
+            </Button>
             <span className="toolbarseparator" />
-            <button
+            <Button
               className={
                 connected ? "secondary connectbutton" : "primary connectbutton"
               }
-              disabled={busy || !snapshot || Boolean(transitioning)}
+              pending={busy || Boolean(transitioning)}
+              disabled={!snapshot}
               onClick={() =>
                 run(() =>
                   mutation(connected ? "proxy.disconnect" : "proxy.connect"),
@@ -287,15 +289,15 @@ function App({ routes }: { routes: RouteContribution[] }) {
             >
               <Icon name="power" size={14} />
               {transitioning ? "切换中…" : connected ? "停止代理" : "启动代理"}
-            </button>
+            </Button>
           </div>
         </header>
         {error ? (
           <div role="alert" className="alert alert-error">
             {error}
-            <button aria-label="关闭错误" onClick={() => setError("")}>
+            <Button aria-label="关闭错误" onClick={() => setError("")}>
               <Icon name="close" size={14} />
-            </button>
+            </Button>
           </div>
         ) : null}
         {pendingConfiguration ? (
@@ -304,13 +306,13 @@ function App({ routes }: { routes: RouteContribution[] }) {
               <strong>有配置等待生效</strong>
               <span>当前连接仍使用上一次配置。应用后会重新建立连接。</span>
             </div>
-            <button
+            <Button
               className="primary"
-              disabled={busy}
+              pending={Boolean(busy)}
               onClick={() => run(() => mutation("proxy.connect"))}
             >
               应用配置
-            </button>
+            </Button>
           </div>
         ) : null}
         {snapshot ? (
