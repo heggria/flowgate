@@ -125,17 +125,17 @@ try {
     await p.getByText("技术信息与故障追踪", { exact: true }).click();
     await capture("extensions-details-" + theme);
     await nav("activity");
-    await p.locator(".disclosure > summary").first().click();
+    await p.getByText("服务诊断", { exact: true }).click();
     await p.getByRole("button", { name: "读取最近调用" }).click();
     await capture("activity-details-" + theme);
     await nav("settings");
     await p.getByText("组件版本", { exact: true }).click();
     await p
-      .getByRole("heading", { name: "官方扩展更新" })
+      .getByRole("heading", { name: "关于与更新" })
       .scrollIntoViewIfNeeded();
     await capture("updates-" + theme);
     await nav("nodes");
-    await p.getByRole("button", { name: "添加订阅", exact: true }).click();
+    await p.getByRole("button", { name: "导入资源", exact: true }).click();
     await capture("subscription-" + theme);
     await p.keyboard.press("Escape");
     await p.locator(".node .actionmenu > summary").first().click();
@@ -147,7 +147,7 @@ try {
     const dialog = p.getByRole("dialog");
     await dialog.waitFor();
     const heights = await dialog
-      .locator(".dialogfooter button")
+      .locator(".dialogfooter button:not(.infotip)")
       .evaluateAll((els) => els.map((el) => el.getBoundingClientRect().height));
     assert.equal(
       new Set(heights).size,

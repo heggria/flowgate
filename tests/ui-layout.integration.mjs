@@ -236,7 +236,7 @@ try {
         if (zoom === 1 && width === 1180) await axe(id + "-" + theme);
       }
       await nav("nodes");
-      await p.getByRole("button", { name: "添加订阅", exact: true }).click();
+      await p.getByRole("button", { name: "导入资源", exact: true }).click();
       await settle();
       report.dialogs.push({
         name: "subscription",

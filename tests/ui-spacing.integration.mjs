@@ -80,6 +80,10 @@ try {
           return {
             viewport: innerWidth,
             heading: box(document.querySelector(".resourceheading")),
+            hero: visible(".connectionhero")[0],
+            chart: visible(".chartpanel")[0],
+            connections: visible(".connectionpanel")[0],
+            nodeRows: visible(".node"),
             banner: visible(".configurationbar")[0],
             metrics: visible(".metriclabel"),
             dashboards: Array.from(
@@ -109,46 +113,59 @@ try {
             geometry.heading.left,
             `${name}/${width} shared page gutter`,
           );
-        if (name === "概览" && width > 1100)
-          close(
-            geometry.panelTitles[0].top,
-            geometry.panelTitles[1].top,
-            "dashboard headers share top alignment",
-          );
-        if (name === "概览" && width <= 1100)
-          close(
-            geometry.metrics[0].left,
-            geometry.metrics[2].left,
-            "metric rows share column origin",
-          );
         if (name === "概览") {
-          for (const grid of geometry.dashboards) {
-            for (let i = 1; i < grid.panels.length; i++) {
-              if (grid.panels[i].top > grid.panels[i - 1].top + 1)
-                close(
-                  grid.panels[i].top - grid.panels[i - 1].bottom,
-                  grid.gap,
-                  "stacked panels have one gap owner",
-                );
-            }
-          }
           close(
-            geometry.dashboards[1].box.top - geometry.dashboards[0].box.bottom,
-            geometry.dashboards[0].margin,
-            "dashboard sections use the declared gap",
+            geometry.hero.left,
+            geometry.heading.left,
+            "hero shares page left edge",
           );
+          close(
+            geometry.hero.right,
+            geometry.heading.right,
+            "hero shares page right edge",
+          );
+          close(
+            geometry.connections.left,
+            geometry.hero.left,
+            "connection list shares hero edge",
+          );
+          assert.ok(
+            geometry.connections.top >= geometry.hero.bottom,
+            "overview sections do not overlap",
+          );
+          if (geometry.chart)
+            close(
+              geometry.chart.right,
+              geometry.hero.right,
+              "chart shares hero right edge",
+            );
+          if (
+            geometry.metrics.length === 4 &&
+            geometry.metrics[2].top > geometry.metrics[0].top + 1
+          )
+            close(
+              geometry.metrics[0].left,
+              geometry.metrics[2].left,
+              "stacked metric rows share column origin",
+            );
         }
         if (name === "节点与订阅") {
           close(
-            geometry.nodeIcons[0].left,
-            geometry.sourceIcons[0].left,
-            "resource icon column",
-          );
-          close(
             geometry.nodeText[0].left,
-            geometry.sourceText[0].left,
-            "resource text column",
+            geometry.nodeRows[0].left + 10,
+            "compact node text uses the shared inset",
           );
+          await p.getByRole("button", { name: /^订阅来源/ }).click();
+          const sourceIcon = await p
+            .locator(".sourceicon")
+            .first()
+            .boundingBox();
+          close(
+            sourceIcon.x,
+            geometry.nodeText[0].left,
+            "source icon shares compact node leading edge",
+          );
+          await p.getByRole("button", { name: /^节点 [0-9]/ }).click();
         }
         if (name === "设置") {
           for (const row of geometry.settings)
@@ -300,7 +317,7 @@ try {
           }
           await p
             .getByRole("button", {
-              name: name === "节点与订阅" ? "添加订阅" : "＋ 添加规则",
+              name: name === "节点与订阅" ? "导入资源" : "＋ 添加规则",
               exact: true,
             })
             .click();
@@ -326,7 +343,7 @@ try {
             }
           }
           const buttons = await dialog
-            .locator(".dialogfooter button")
+            .locator(".dialogfooter button:not(.infotip)")
             .evaluateAll((els) =>
               els.map((el) => el.getBoundingClientRect().height),
             );
@@ -357,7 +374,7 @@ try {
       }
     }
   }
-  // Reproduce the narrow right-column outlet at the screenshot's window size.
+  // Check long and single-option outlet menus in the current switch dialog.
   await app.evaluate(({ BrowserWindow }) => {
     const w = BrowserWindow.getAllWindows()[0];
     w.setSize(1180, 820);
@@ -367,15 +384,16 @@ try {
     document.documentElement.dataset.theme = "light";
   });
   await nav("概览");
-  const outlet = p.locator(".exitpanel .selecttrigger");
+  await p.getByRole("button", { name: "切换出口", exact: true }).click();
+  const outlet = p.getByRole("dialog").locator(".selecttrigger");
   await outlet.click();
   await settle();
   const anchor = await outlet.boundingBox(),
     tall = await p.locator(".selectpopover:popover-open").boundingBox();
-  close(
-    anchor.y - tall.y - tall.height,
-    6,
-    "long outlet menu flips above instead of covering the trigger",
+  assert.ok(
+    Math.abs(anchor.y - tall.y - tall.height - 6) <= 1 ||
+      Math.abs(tall.y - anchor.y - anchor.height - 6) <= 1,
+    "long outlet menu never covers its trigger",
   );
   await p.keyboard.press("Escape");
   await p.evaluate(() => {
@@ -397,7 +415,7 @@ try {
   );
   close(shortMenu.x, shortAnchor.x, "screenshot case left aligned");
   close(shortMenu.width, shortAnchor.width, "screenshot case width aligned");
-  const card = await p.locator(".exitpanel").boundingBox();
+  const card = await p.getByRole("dialog").boundingBox();
   await p.screenshot({
     path: `${output}/screenshot-case-fixed.png`,
     clip: {

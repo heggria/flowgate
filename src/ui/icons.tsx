@@ -1,5 +1,10 @@
 import brand from "../../assets/brand/mark.json";
 const paths: Record<string, string> = {
+  copy: "M8 8h12v13H8z M16 8V3H3v13h5",
+  density: "M4 5h16 M4 10h16 M4 15h16 M4 20h16",
+  check: "M5 12l4 4L19 6",
+  circle: "M20 12a8 8 0 1 1-16 0 8 8 0 0 1 16 0",
+  info: "M12 11v6 M12 7h.01 M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0",
   brand: brand.gate + " " + brand.streams,
   overview: "M4 4h6v7H4z M14 4h6v4h-6z M14 12h6v8h-6z M4 15h6v5H4z",
   connections: "M4 8h12 M13 5l3 3-3 3 M20 16H8 M11 13l-3 3 3 3",

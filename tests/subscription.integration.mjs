@@ -105,7 +105,7 @@ try {
     );
   const snapshot = () => request("snapshot");
   await page.getByRole("button", { name: "节点与订阅", exact: true }).click();
-  await page.getByRole("button", { name: "添加订阅", exact: true }).click();
+  await page.getByRole("button", { name: "导入资源", exact: true }).click();
   let dialog = page.getByRole("dialog");
   await dialog.getByLabel("订阅名称").fill("Subscription fixture");
   await dialog
@@ -137,6 +137,7 @@ try {
     "actual HTTPS -> isolated verified parser worker -> read-only UI preview -> single-fetch commit; metadata visible, secrets redacted",
   );
 
+  await page.getByRole("button", { name: /^订阅来源/ }).click();
   const before304 = (await request("snapshot")).configuration.revision;
   await page.getByRole("button", { name: "更新", exact: true }).click();
   dialog = page.getByRole("dialog");

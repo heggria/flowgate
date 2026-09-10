@@ -1,5 +1,7 @@
-import { Button, EmptyState } from "../components";
-import { useState } from "react";
+import { Pagination } from "../components";
+import { useResourceSearch } from "../resourceSearch";
+import { Button, EmptyState, SearchField, ActionMenu } from "../components";
+import { useEffect, useState } from "react";
 import { useDraft } from "../drafts";
 import type {
   Configuration,
@@ -15,7 +17,6 @@ import {
   outletChoices,
   useTask,
 } from "../components";
-import { Icon } from "../icons";
 const kindName = {
   domain_suffix: "域名后缀",
   domain: "完整域名",
@@ -26,13 +27,54 @@ const kindName = {
 export function Rules({
   config,
   save,
+  preview,
+  sources,
 }: {
   config: Configuration;
+  preview?: import("react").ReactNode;
+  sources?: import("react").ReactNode;
   save: (c: Configuration, options?: { local?: boolean }) => Promise<boolean>;
 }) {
   const [editing, setEditing] = useState<Rule | "new" | null>(null),
     [notice, setNotice] = useState("");
+  const [showPreview, setShowPreview] = useState(false),
+    [showSources, setShowSources] = useState(false);
+  const [listPage, setListPage] = useState(0);
+  const [query, setQuery] = useResourceSearch("rules");
+  const [source, setSource] = useState("all");
+  const [undo, setUndo] = useState<{
+    rule: Rule;
+    index: number;
+    next?: string;
+  } | null>(null);
   const choices = outletChoices(config);
+  const filtered = config.rules
+    .map((rule, index) => ({ rule, index }))
+    .filter(
+      ({ rule }) =>
+        (source === "all" ||
+          (source === "manual" ? !rule.sourceId : rule.sourceId === source)) &&
+        `${rule.value} ${kindName[rule.kind]} ${choices.find((o) => o.value === rule.outbound)?.label}`
+          .toLowerCase()
+          .includes(query.trim().toLowerCase()),
+    );
+  const page = Math.min(
+    listPage,
+    Math.max(0, Math.ceil(filtered.length / 100) - 1),
+  );
+  useEffect(() => {
+    setListPage(0);
+  }, [query, source]);
+  useEffect(() => {
+    const reset = (event: Event) => {
+      if ((event as CustomEvent).detail?.page === "rules") {
+        setShowSources(false);
+        setSource("all");
+      }
+    };
+    window.addEventListener("flowgate:search", reset);
+    return () => window.removeEventListener("flowgate:search", reset);
+  }, []);
   const outboundName = (id: string) =>
     choices.find((o) => o.value === id)?.label ?? "不可用出口";
   const move = (index: number, direction: number) => {
@@ -46,127 +88,226 @@ export function Rules({
   const close = () => setEditing(null);
   return (
     <div className="resourcepage">
-      <PageHeader
-        title="分流规则"
-        description="从上到下匹配，第一条命中的规则决定出口。"
-      >
+      <PageHeader title="分流规则">
+        <Button className="quiet" onClick={() => setShowPreview(true)}>
+          检查路径
+        </Button>
+        <Button
+          className="quiet"
+          aria-pressed={showSources}
+          onClick={() => setShowSources(!showSources)}
+        >
+          {showSources ? "返回规则" : "管理规则集"}
+        </Button>
         <Button className="primary" onClick={() => setEditing("new")}>
           ＋ 添加规则
         </Button>
       </PageHeader>
-      {notice ? (
-        <p className="inlinenotice" role="status">
-          <span className="dot online" />
-          {notice}
-        </p>
+      {showPreview ? (
+        <Modal
+          title="路径预览"
+          icon="rules"
+          onClose={() => setShowPreview(false)}
+        >
+          {preview}
+        </Modal>
       ) : null}
-      <section className="resourcesection ruleslist" aria-label="规则优先级">
-        <div className="resourcetools">
-          <h2>
-            匹配顺序 <span className="count">{config.rules.length}</span>
-          </h2>
-          <span className="hint">优先匹配上方规则</span>
-        </div>
-        {config.rules.length ? (
-          config.rules.map((r, index) => (
-            <div className="rulerow" key={r.id}>
-              <span className="index">
-                {String(index + 1).padStart(2, "0")}
-              </span>
-              <div className="ruleidentity">
-                <div>
-                  <span className="rulekind">{kindName[r.kind]}</span>
-                  <strong className="rulevalue" title={r.value}>
-                    {r.value}
-                  </strong>
-                </div>
-                <small>
-                  {r.sourceId
-                    ? (config.ruleSources?.find((s) => s.id === r.sourceId)
-                        ?.name ??
-                      config.subscriptions.find((s) => s.id === r.sourceId)
-                        ?.name ??
-                      "规则集")
-                    : "手动规则"}
-                </small>
-              </div>
-              <span className="rulearrow">
-                <Icon name="arrow" size={14} />
-              </span>
-              <span className="ruleoutbound" title={outboundName(r.outbound)}>
-                {outboundName(r.outbound)}
-              </span>
-              <div className="rowactions">
+      {showSources ? (
+        sources
+      ) : (
+        <>
+          <div className="defaultrule">
+            <span>默认出口</span>
+            <Combobox
+              label="默认出口"
+              value={config.settings.finalOutbound}
+              options={choices}
+              onChange={(value) => {
+                void save({
+                  ...config,
+                  settings: { ...config.settings, finalOutbound: value },
+                });
+              }}
+            />
+          </div>
+          {notice ? (
+            <p className="inlinenotice" role="status">
+              <span className="dot online" />
+              {notice}
+              {undo ? (
                 <Button
-                  className="iconbutton"
-                  aria-label={`上移规则 ${r.value}`}
-                  disabled={index === 0}
-                  onClick={() => move(index, -1)}
-                >
-                  ↑
-                </Button>
-                <Button
-                  className="iconbutton"
-                  aria-label={`下移规则 ${r.value}`}
-                  disabled={index === config.rules.length - 1}
-                  onClick={() => move(index, 1)}
-                >
-                  ↓
-                </Button>
-                <Button
-                  className="quiet"
-                  title={
-                    r.sourceId
-                      ? "修改来源中的规则会在下次更新时覆盖"
-                      : "编辑规则"
-                  }
-                  onClick={() => {
-                    setEditing(r);
-                  }}
-                >
-                  编辑
-                </Button>
-                <Button
-                  className="iconbutton dangertext"
-                  aria-label={`删除规则 ${r.value}`}
+                  className="textbutton"
                   onClick={async () => {
-                    if (
-                      await save({
-                        ...config,
-                        rules: config.rules.filter((x) => x.id !== r.id),
-                      })
-                    )
-                      setNotice("规则已删除。");
+                    if (config.rules.some((r) => r.id === undo.rule.id)) {
+                      setUndo(null);
+                      return;
+                    }
+                    const rules = [...config.rules];
+                    const next = rules.findIndex((r) => r.id === undo.next);
+                    rules.splice(
+                      next >= 0 ? next : Math.min(undo.index, rules.length),
+                      0,
+                      undo.rule,
+                    );
+                    if (await save({ ...config, rules })) {
+                      setUndo(null);
+                      setNotice("规则已恢复原位置。");
+                    }
                   }}
                 >
-                  <Icon name="close" size={13} />
+                  撤销删除
                 </Button>
-              </div>
+              ) : null}
+            </p>
+          ) : null}
+          <section
+            className="resourcesection ruleslist"
+            aria-label="规则优先级"
+          >
+            <div className="resourcetools listtoolbar">
+              <h2>
+                匹配顺序 <span className="count">{config.rules.length}</span>
+              </h2>
+              <SearchField
+                label="搜索规则"
+                value={query}
+                onChange={setQuery}
+                placeholder="搜索目标、类型或出口"
+              />
+              <Combobox
+                label="规则来源"
+                value={source}
+                onChange={setSource}
+                options={[
+                  { value: "all", label: "全部来源" },
+                  { value: "manual", label: "手动规则" },
+                  ...[
+                    ...(config.ruleSources ?? []),
+                    ...config.subscriptions,
+                  ].map((s) => ({ value: s.id, label: s.name })),
+                ]}
+              />
             </div>
-          ))
-        ) : (
-          <EmptyState
-            title="为不同流量选择路径"
-            description="按域名、IP 网段或进程分流，未匹配的流量使用默认出口。"
-            icon="rules"
-          />
-        )}
-        <div className="defaultrule">
-          <span className="rulekind">默认规则</span>
-          <span>其余流量发送到</span>
-          <Combobox
-            label="默认出口"
-            value={config.settings.finalOutbound}
-            options={choices}
-            onChange={(value) => {
-              void save({
-                ...config,
-                settings: { ...config.settings, finalOutbound: value },
-              });
-            }}
-          />
-        </div>
-      </section>
+            <Pagination
+              total={filtered.length}
+              page={page}
+              onChange={setListPage}
+            />
+            {filtered.length ? (
+              filtered
+                .slice(page * 100, (page + 1) * 100)
+                .map(({ rule: r, index }) => (
+                  <div className="rulerow" key={r.id}>
+                    <span className="index">
+                      {String(index + 1).padStart(2, "0")}
+                    </span>
+                    <div className="ruleidentity">
+                      <Button
+                        className="rowlink"
+                        aria-label={`编辑规则 ${r.value}`}
+                        onClick={() => setEditing(r)}
+                      >
+                        <strong className="rulevalue" title={r.value}>
+                          {r.value}
+                        </strong>
+                      </Button>
+                      <small>
+                        {kindName[r.kind]}
+                        {r.sourceId
+                          ? ` · ${config.ruleSources?.find((s) => s.id === r.sourceId)?.name ?? config.subscriptions.find((s) => s.id === r.sourceId)?.name ?? "规则集"}`
+                          : ""}
+                      </small>
+                    </div>
+                    <span
+                      className="ruleoutbound"
+                      title={outboundName(r.outbound)}
+                    >
+                      {outboundName(r.outbound)}
+                    </span>
+                    <div className="rowactions">
+                      <ActionMenu label={`管理规则 ${r.value}`}>
+                        <Button onClick={() => setEditing(r)}>编辑</Button>
+                        <Button
+                          disabled={index === 0}
+                          onClick={() => move(index, -1)}
+                        >
+                          上移
+                        </Button>
+                        <Button
+                          disabled={index === config.rules.length - 1}
+                          onClick={() => move(index, 1)}
+                        >
+                          下移
+                        </Button>
+                        <Button
+                          disabled={index === 0}
+                          onClick={() =>
+                            save({
+                              ...config,
+                              rules: [
+                                r,
+                                ...config.rules.filter((x) => x.id !== r.id),
+                              ],
+                            })
+                          }
+                        >
+                          移至顶部
+                        </Button>
+                        <Button
+                          disabled={index === config.rules.length - 1}
+                          onClick={() =>
+                            save({
+                              ...config,
+                              rules: [
+                                ...config.rules.filter((x) => x.id !== r.id),
+                                r,
+                              ],
+                            })
+                          }
+                        >
+                          移至底部
+                        </Button>
+                        <Button
+                          className="dangertext"
+                          aria-label={`删除规则 ${r.value}`}
+                          onClick={async () => {
+                            if (
+                              await save({
+                                ...config,
+                                rules: config.rules.filter(
+                                  (x) => x.id !== r.id,
+                                ),
+                              })
+                            ) {
+                              setUndo({
+                                rule: r,
+                                index,
+                                next: config.rules[index + 1]?.id,
+                              });
+                              setNotice("规则已删除。");
+                            }
+                          }}
+                        >
+                          删除
+                        </Button>
+                      </ActionMenu>
+                    </div>
+                  </div>
+                ))
+            ) : (
+              <EmptyState
+                title={
+                  query || source !== "all"
+                    ? "没有匹配的规则"
+                    : "为不同流量选择路径"
+                }
+                description="按域名、IP 网段或进程分流，未匹配的流量使用默认出口。"
+                icon="rules"
+              />
+            )}
+          </section>
+        </>
+      )}
       {editing ? (
         <RuleEditor
           key={editing === "new" ? "new" : editing.id}
@@ -196,6 +337,8 @@ function RuleEditor({
 }: {
   rule?: Rule;
   config: Configuration;
+  preview?: import("react").ReactNode;
+  sources?: import("react").ReactNode;
   save: (c: Configuration, options?: { local?: boolean }) => Promise<boolean>;
   close: () => void;
   onSaved: () => void;

@@ -141,7 +141,11 @@ try {
       .first()
       .waitFor();
     await scan("update-error-" + theme);
-    await p.getByRole("button", { name: "关闭错误" }).click();
+    assert.equal(
+      await p.getByRole("button", { name: "关闭错误" }).count(),
+      0,
+      "update failure stays local",
+    );
     await p.evaluate(() => {
       delete uiFixture.outcomes["release.check"];
     });
@@ -170,7 +174,7 @@ try {
       .waitFor();
     await scan("diagnostics-error-" + theme);
     await nav("节点与订阅");
-    await p.getByRole("button", { name: "添加订阅", exact: true }).click();
+    await p.getByRole("button", { name: "导入资源", exact: true }).click();
     let dialog = p.getByRole("dialog");
     await dialog
       .getByRole("textbox", { name: "订阅链接", exact: true })

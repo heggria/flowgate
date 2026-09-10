@@ -1,5 +1,11 @@
-import { Button, SearchField, Combobox, EmptyState } from "../components";
-import { useState, useRef, useEffect, useId } from "react";
+import {
+  Button,
+  SearchField,
+  Combobox,
+  EmptyState,
+  Modal,
+} from "../components";
+import { useState, useRef, useId } from "react";
 import type {
   TrafficSnapshot,
   FlowRecord,
@@ -29,15 +35,8 @@ export function Traffic({
   const [query, setQuery] = useState(""),
     [active, setActive] = useState(false),
     [selected, setSelected] = useState<FlowRecord | null>(null);
-  const inspector = useRef<HTMLDivElement>(null);
   const returnFocus = useRef<HTMLButtonElement | null>(null);
   const inspectorId = useId();
-  useEffect(() => {
-    if (selected) {
-      inspector.current?.scrollIntoView({ block: "nearest" });
-      inspector.current?.focus({ preventScroll: true });
-    }
-  }, [selected?.id]);
   const closeDetails = () => {
     setSelected(null);
     returnFocus.current?.focus({ preventScroll: true });
@@ -59,7 +58,9 @@ export function Traffic({
     );
   const current = traffic?.flows.find((f) => f.id === selected?.id) ?? selected;
   return (
-    <section className="panel connectionpanel">
+    <section
+      className={`panel connectionpanel ${compact ? "" : "fullconnections"}`}
+    >
       <div className="paneltitle">
         <h2>
           {compact ? "最近连接" : "连接列表"}
@@ -174,39 +175,19 @@ export function Traffic({
         </EmptyState>
       ) : null}
       {current ? (
-        <div
-          className="inspector"
-          id={inspectorId}
-          ref={inspector}
-          tabIndex={-1}
-          aria-label="连接详情"
-          onKeyDown={(event) => {
-            if (event.key === "Escape") {
-              event.stopPropagation();
-              closeDetails();
-            }
-          }}
-        >
-          <div className="paneltitle">
-            <h2>连接详情</h2>
-            <Button
-              className="iconbutton"
-              aria-label="关闭连接详情"
-              onClick={closeDetails}
-            >
-              <Icon name="close" />
-            </Button>
+        <Modal title="连接详情" side onClose={closeDetails}>
+          <div className="inspector" id={inspectorId}>
+            {configuration
+              ? detailPanels?.map(({ id, Component }) => (
+                  <Component
+                    key={id}
+                    flow={current}
+                    configuration={configuration}
+                  />
+                ))
+              : null}
           </div>
-          {configuration
-            ? detailPanels?.map(({ id, Component }) => (
-                <Component
-                  key={id}
-                  flow={current}
-                  configuration={configuration}
-                />
-              ))
-            : null}
-        </div>
+        </Modal>
       ) : null}
     </section>
   );

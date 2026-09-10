@@ -1,4 +1,10 @@
-import { Button, EmptyState, TaskError as NetworkError } from "../components";
+import {
+  Button,
+  EmptyState,
+  InfoTip,
+  Disclosure,
+  TaskError as NetworkError,
+} from "../components";
 import { useState } from "react";
 import {
   Combobox,
@@ -24,22 +30,63 @@ export function Network({ snapshot, save, run, navigate }: FeatureProps) {
   const c = snapshot.configuration;
   return (
     <>
-      <PageHeader
-        title="网络环境"
-        description="观察本机网络，将外部连接接入分流。"
-      >
+      <PageHeader title="网络环境">
         <Button className="primary" onClick={() => setAdding(true)}>
           ＋ 绑定网络
         </Button>
       </PageHeader>
       <NetworkError message={draft.error} />
-      <p>
-        HTTP / SOCKS 外部代理可在节点页导入。已有网络接口可作为独立的 TCP / UDP
-        出口。
-        <Button className="textbutton" onClick={() => navigate("nodes")}>
-          前往导入外部代理 →
-        </Button>
-      </p>
+      <section className="panel" aria-label="网络共存概况">
+        <div className="paneltitle">
+          <h2>网络共存</h2>
+          <InfoTip label="网络观测说明">
+            这是最近一次系统观测，不保证所有流量可分流。接口归属无法确认时保持未知，不依据接口名判断
+            VPN 品牌。
+          </InfoTip>
+        </div>
+        <div className="connectionfacts">
+          <div>
+            <span>默认路径</span>
+            <strong>{snapshot.network?.defaultInterface ?? "未检测"}</strong>
+          </div>
+          <div>
+            <span>系统代理 / PAC</span>
+            <strong>
+              {snapshot.network
+                ? `${snapshot.network.proxyEnabled ? "已开启" : "未开启"}${snapshot.network.pacEnabled ? " · PAC" : ""}`
+                : "未检测"}
+            </strong>
+          </div>
+          <div>
+            <span>共存检查</span>
+            <strong>
+              {snapshot.networkConflicts?.some((i) => i.severity === "blocked")
+                ? "存在冲突"
+                : snapshot.networkConflicts?.length
+                  ? "有使用限制"
+                  : snapshot.network
+                    ? "未发现已知冲突"
+                    : "待检测"}
+            </strong>
+          </div>
+        </div>
+        <div className="sectionactions">
+          <Button
+            className="secondary"
+            onClick={() => run(() => client.request("network.refresh"))}
+          >
+            刷新网络
+          </Button>
+          <Button className="quiet" onClick={() => navigate("nodes")}>
+            导入外部代理
+          </Button>
+          <span className="hint">
+            {snapshot.network
+              ? new Date(snapshot.network.capturedAt).toLocaleTimeString()
+              : ""}
+          </span>
+        </div>
+      </section>
       {snapshot.networkConflicts?.map((issue) => (
         <p
           key={issue.id}
@@ -54,10 +101,13 @@ export function Network({ snapshot, save, run, navigate }: FeatureProps) {
         </p>
       ))}
       {snapshot.network?.pacEnabled ? (
-        <p role="status">
-          系统正在使用 PAC。PAC
-          会按目标动态选路，不能当作单一出口；本应用保留其设置，手动代理模式可独立使用。
-        </p>
+        <div className="headinglabel">
+          <span>PAC 已开启</span>
+          <InfoTip label="PAC 共存说明">
+            PAC
+            会按目标动态选路，不能当作单一出口。本应用保留其设置，手动代理模式可独立使用。
+          </InfoTip>
+        </div>
       ) : null}
       {(snapshot.network?.systemProxies?.length ?? 0) > 0 ? (
         <section className="panel">
@@ -190,6 +240,13 @@ export function Network({ snapshot, save, run, navigate }: FeatureProps) {
           <div className="entry networkbinding" key={n.id}>
             <div className="entrycopy">
               <strong>{n.name}</strong>
+              <span className="badge">
+                {c.rules.some((r) => r.outbound === n.id) ||
+                c.settings.selectedNode === n.id ||
+                c.settings.finalOutbound === n.id
+                  ? "已被配置使用"
+                  : "可选出口"}
+              </span>
               <small>
                 <code>{n.dnsServer}</code>
               </small>
@@ -231,24 +288,22 @@ export function Network({ snapshot, save, run, navigate }: FeatureProps) {
         />
       ) : (
         <>
-          <section className="panel">
-            <h2>接口与地址</h2>
+          <Disclosure title="接口与地址">
             {snapshot.network.interfaces.map((i) => (
               <div className="detailrow" key={i.name}>
                 <code>{i.name}</code>
                 <span>{i.addresses.join(" · ")}</span>
               </div>
             ))}
-          </section>
-          <section className="panel">
-            <h2>外部软件</h2>
+          </Disclosure>
+          <Disclosure title="外部软件">
             {snapshot.network.plugins.map((p) => (
               <div className="entry" key={p.id}>
                 <strong>{p.name}</strong>
                 <p>{p.detail}</p>
               </div>
             ))}
-          </section>
+          </Disclosure>
           {snapshot.network.warnings.map((w) => (
             <p key={w} className="hint">
               {w}

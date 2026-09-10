@@ -1,3 +1,5 @@
+import { Pagination } from "../components";
+import { useResourceSearch } from "../resourceSearch";
 import { Button, SearchField, EmptyState } from "../components";
 import { useState, useEffect } from "react";
 import type {
@@ -118,41 +120,91 @@ export function Nodes({
   save,
   running,
   appliedRevision,
+  appliedNode,
 }: {
   save: (config: Configuration) => Promise<boolean>;
   running: boolean;
   appliedRevision?: number;
+  appliedNode?: string;
   measurements?: import("../../../packages/contracts/src/index").AppSnapshot["nodeMeasurements"];
   config: Configuration;
   run: (fn: () => Promise<unknown>) => Promise<void>;
 }) {
-  const [query, setQuery] = useState(""),
+  const [listPage, setListPage] = useState(0);
+  const [query, setQuery] = useResourceSearch("nodes"),
     [editing, setEditing] = useState<string | null>(null),
-    [adding, setAdding] = useState(false),
+    [adding, setAdding] = useState(() => {
+      const open = sessionStorage.getItem("flowgate.openImport") === "1";
+      sessionStorage.removeItem("flowgate.openImport");
+      return open;
+    }),
     [refreshing, setRefreshing] = useState<string | null>(null),
     [renaming, setRenaming] = useState(false),
     [notice, setNotice] = useState("");
+  const [tab, setTab] = useState("nodes"),
+    [source, setSource] = useState("all"),
+    [sort, setSort] = useState("original");
+  useEffect(() => {
+    if (tab === "groups" && !config.groups?.length) setTab("nodes");
+  }, [tab, config.groups?.length]);
+  const [selecting, setSelecting] = useState(false);
+  const [checked, setChecked] = useState<string[]>([]);
+  const [comfortable, setComfortable] = useState(
+    () => localStorage.getItem("flowgate.density") === "comfortable",
+  );
   const sourceDraft = useDraft("subscription-name", { id: "", name: "" }),
     task = useTask();
+  const sourceNames = new Map(config.subscriptions.map((s) => [s.id, s.name]));
   const node = config.nodes.find((n) => n.id === editing),
-    filtered = config.nodes.filter((n) =>
-      `${n.name} ${n.server} ${n.type}`
-        .toLowerCase()
-        .includes(query.trim().toLowerCase()),
+    filtered = config.nodes.filter(
+      (n) =>
+        (source === "all" ||
+          (source === "local" ? !n.sourceId : n.sourceId === source)) &&
+        `${n.name} ${n.server} ${n.type} ${sourceNames.get(n.sourceId ?? "") ?? "本地节点"}`
+          .toLowerCase()
+          .includes(query.trim().toLowerCase()),
     );
+  const page = Math.min(
+    listPage,
+    Math.max(0, Math.ceil(filtered.length / 100) - 1),
+  );
   const measurementById = new Map(
     measurements.map((value) => [value.id, value]),
   );
+  if (sort !== "original")
+    filtered.sort((a, b) =>
+      sort === "name"
+        ? a.name.localeCompare(b.name)
+        : (measurementById.get(a.id)?.state === "succeeded"
+            ? (measurementById.get(a.id)!.delayMs ?? Infinity)
+            : Infinity) -
+          (measurementById.get(b.id)?.state === "succeeded"
+            ? (measurementById.get(b.id)!.delayMs ?? Infinity)
+            : Infinity),
+    );
+  useEffect(() => {
+    setListPage(0);
+  }, [query, source, sort]);
+  useEffect(() => {
+    const reset = (event: Event) => {
+      if ((event as CustomEvent).detail?.page === "nodes") {
+        setTab("nodes");
+        setSource("all");
+      }
+    };
+    window.addEventListener("flowgate:search", reset);
+    return () => window.removeEventListener("flowgate:search", reset);
+  }, []);
   useEffect(() => {
     if (!notice) return;
     const timer = setTimeout(() => setNotice(""), 6000);
     return () => clearTimeout(timer);
   }, [notice]);
   return (
-    <div className="resourcepage">
-      <PageHeader title="节点与订阅" description="管理代理资源，选择流量出口。">
+    <div className={`resourcepage ${comfortable ? "comfortable" : "dense"}`}>
+      <PageHeader title="节点与订阅">
         <Button className="primary" onClick={() => setAdding(true)}>
-          <span aria-hidden="true">＋</span> 添加订阅
+          <span aria-hidden="true">＋</span> 导入资源
         </Button>
       </PageHeader>
       {notice ? (
@@ -161,11 +213,54 @@ export function Nodes({
           {notice}
         </p>
       ) : null}
-      <section className="resourcesection" aria-label="代理节点">
-        <div className="resourcetools">
-          <div className="sectioncaption">
-            全部节点 <span className="count">{config.nodes.length}</span>
-          </div>
+      <div className="resourcetools" aria-label="资源分类">
+        <div className="resourceviews">
+          <Button
+            className="quiet"
+            aria-pressed={tab === "nodes"}
+            onClick={() => setTab("nodes")}
+          >
+            节点 {config.nodes.length}
+          </Button>
+          <Button
+            className="quiet"
+            aria-pressed={tab === "sources"}
+            onClick={() => setTab("sources")}
+          >
+            订阅来源 {config.subscriptions.length}
+          </Button>
+          {config.groups?.length ? (
+            <Button
+              className="quiet"
+              aria-pressed={tab === "groups"}
+              onClick={() => setTab("groups")}
+            >
+              策略组 {config.groups.length}
+            </Button>
+          ) : null}
+        </div>
+        <Button
+          className="iconbutton"
+          aria-label="切换列表密度"
+          title={comfortable ? "切换为紧凑密度" : "切换为舒适密度"}
+          aria-pressed={comfortable}
+          onClick={() => {
+            setComfortable(!comfortable);
+            localStorage.setItem(
+              "flowgate.density",
+              comfortable ? "compact" : "comfortable",
+            );
+          }}
+        >
+          <Icon name="density" size={16} />
+        </Button>
+      </div>
+      <section
+        hidden={tab !== "nodes"}
+        className="resourcesection"
+        aria-label="代理节点"
+      >
+        <div className="resourcetools listtoolbar">
           <SearchField
             label="搜索节点"
             placeholder="搜索名称、地址或协议"
@@ -173,28 +268,131 @@ export function Nodes({
             onChange={setQuery}
             clearLabel="清空节点搜索"
           />
+          <Combobox
+            label="节点来源"
+            value={source}
+            onChange={setSource}
+            options={[
+              { value: "all", label: "全部来源" },
+              { value: "local", label: "本地节点" },
+              ...config.subscriptions.map((s) => ({
+                value: s.id,
+                label: s.name,
+              })),
+            ]}
+          />
+          <Combobox
+            label="节点排序"
+            value={sort}
+            onChange={setSort}
+            options={[
+              { value: "original", label: "原始顺序" },
+              { value: "name", label: "名称" },
+              { value: "delay", label: "延迟优先" },
+            ]}
+          />
+          <Button
+            className="quiet"
+            aria-pressed={selecting}
+            onClick={() => {
+              setSelecting(!selecting);
+              setChecked([]);
+            }}
+          >
+            {selecting ? "完成" : "多选"}
+          </Button>
+          {selecting ? (
+            <label className="checkbox">
+              <input
+                type="checkbox"
+                aria-label="选择筛选后的全部节点"
+                checked={
+                  filtered.length > 0 &&
+                  filtered.every((n) => checked.includes(n.id))
+                }
+                onChange={(e) =>
+                  setChecked(e.target.checked ? filtered.map((n) => n.id) : [])
+                }
+              />
+              全选
+            </label>
+          ) : null}
+          {checked.length ? (
+            <Button
+              className="secondary"
+              disabled={!running || appliedRevision !== config.revision}
+              pending={task.pending}
+              onClick={() =>
+                void task.execute(async () => {
+                  let failed = 0;
+                  const ids = checked.filter((id) =>
+                    config.nodes.some((n) => n.id === id),
+                  );
+                  for (let i = 0; i < ids.length; i += 3) {
+                    const results = await Promise.allSettled(
+                      ids
+                        .slice(i, i + 3)
+                        .map((id) => client.request("node.measure", { id })),
+                    );
+                    failed += results.filter(
+                      (r) => r.status === "rejected",
+                    ).length;
+                  }
+                  setNotice(`已检测 ${ids.length} 个节点，${failed} 个失败。`);
+                })
+              }
+            >
+              检测所选 {checked.length} 个
+            </Button>
+          ) : null}
         </div>
+        <Pagination
+          total={filtered.length}
+          page={page}
+          onChange={setListPage}
+        />
+        <TaskError message={task.error} />
         {filtered.length ? (
           <div className="resourcelist">
-            <div className="listcolumns">
-              <span>名称 / 服务器</span>
-              <span>延迟与操作</span>
+            <div className="nodecolumnheader" aria-hidden="true">
+              <span>节点</span>
+              <span>来源</span>
+              <span>延迟 / 出口</span>
             </div>
-            {filtered.map((n) => (
+            {filtered.slice(page * 100, (page + 1) * 100).map((n) => (
               <div
                 className={`node ${n.id === config.settings.selectedNode ? "selectednode" : ""}`}
                 key={n.id}
               >
-                <span className="nodeicon">
-                  <Icon name="nodes" size={17} />
-                </span>
+                {selecting ? (
+                  <input
+                    type="checkbox"
+                    aria-label={`选择节点 ${n.name}`}
+                    checked={checked.includes(n.id)}
+                    onChange={(e) =>
+                      setChecked(
+                        e.target.checked
+                          ? [...checked, n.id]
+                          : checked.filter((id) => id !== n.id),
+                      )
+                    }
+                  />
+                ) : null}
                 <div className="nodeidentity">
-                  <strong title={n.name}>{n.name}</strong>
+                  <strong title={n.name}>
+                    {n.name}
+                    {running && n.id === appliedNode ? (
+                      <span className="currentoutlet">当前</span>
+                    ) : null}
+                  </strong>
                   <small>
-                    {n.server}:{n.port}
-                    <span className="protocolbadge">{n.type}</span>
+                    {n.server}:{n.port}{" "}
+                    <span className="nodeprotocol">{n.type.toUpperCase()}</span>
                   </small>
                 </div>
+                <span className="nodesource">
+                  {sourceNames.get(n.sourceId ?? "") ?? "本地"}
+                </span>
                 <div className="nodeactions">
                   <Button
                     className="latencybutton"
@@ -219,13 +417,27 @@ export function Nodes({
                         ? `${measurementById.get(n.id)?.delayMs} ms`
                         : measurementById.get(n.id)?.state === "failed"
                           ? "重试测速"
-                          : "测延迟"}
+                          : "—"}
                   </Button>
                   <Button
                     className={
                       n.id === config.settings.selectedNode
                         ? "quiet chosen"
-                        : "secondary"
+                        : "quiet selectnode"
+                    }
+                    aria-label={
+                      n.id === config.settings.selectedNode
+                        ? running
+                          ? n.id === appliedNode
+                            ? "当前出口"
+                            : "待应用"
+                          : "✓ 已选择"
+                        : "选择出口"
+                    }
+                    title={
+                      n.id === config.settings.selectedNode
+                        ? undefined
+                        : `选择 ${n.name}`
                     }
                     disabled={n.id === config.settings.selectedNode}
                     onClick={async () => {
@@ -238,11 +450,39 @@ export function Nodes({
                         setNotice("已选择出口，下次启动或应用配置时生效。");
                     }}
                   >
-                    {n.id === config.settings.selectedNode
-                      ? "✓ 已选择"
-                      : "选择出口"}
+                    {n.id === config.settings.selectedNode ? (
+                      running ? (
+                        n.id === appliedNode ? (
+                          "当前出口"
+                        ) : (
+                          "待应用"
+                        )
+                      ) : (
+                        "✓ 已选择"
+                      )
+                    ) : (
+                      <Icon name="circle" size={16} />
+                    )}
                   </Button>
                   <ActionMenu label={`更多操作 ${n.name}`}>
+                    {running ? (
+                      <Button
+                        onClick={async () => {
+                          if (
+                            await save({
+                              ...config,
+                              settings: {
+                                ...config.settings,
+                                selectedNode: n.id,
+                              },
+                            })
+                          )
+                            await run(() => mutation("proxy.connect"));
+                        }}
+                      >
+                        切换并应用（重建连接）
+                      </Button>
+                    ) : null}
                     <Button onClick={() => setEditing(n.id)}>编辑</Button>
                     <ConfirmAction
                       label="移除"
@@ -270,7 +510,9 @@ export function Nodes({
             <Button
               className="secondary"
               onClick={() =>
-                config.nodes.length ? setQuery("") : setAdding(true)
+                config.nodes.length
+                  ? (setQuery(""), setSource("all"))
+                  : setAdding(true)
               }
             >
               {config.nodes.length ? "清除搜索" : "导入代理资源"}
@@ -279,7 +521,11 @@ export function Nodes({
         )}
       </section>
       {(config.groups ?? []).length ? (
-        <section className="resourcesection" aria-label="策略组">
+        <section
+          hidden={tab !== "groups"}
+          className="resourcesection"
+          aria-label="策略组"
+        >
           <div className="resourcetools">
             <h2>
               策略组 <span className="count">{config.groups!.length}</span>
@@ -342,7 +588,10 @@ export function Nodes({
           ))}
         </section>
       ) : null}
-      <section className="resourcesection subscriptions">
+      <section
+        hidden={tab !== "sources"}
+        className="resourcesection subscriptions"
+      >
         <div className="resourcetools">
           <h2>
             订阅来源{" "}
@@ -434,6 +683,8 @@ export function Nodes({
           close={() => setAdding(false)}
           imported={() => {
             setQuery("");
+            setSource("all");
+            setTab("nodes");
             setNotice("代理资源已添加，请在列表中选择出口。");
           }}
         />

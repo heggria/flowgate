@@ -272,6 +272,7 @@ export function Modal({
   busy = false,
   icon = "nodes",
   onCancelRequest,
+  side = false,
 }: {
   title: string;
   description?: string;
@@ -280,6 +281,7 @@ export function Modal({
   busy?: boolean;
   icon?: string;
   onCancelRequest?: () => void;
+  side?: boolean;
 }) {
   const ref = useRef<HTMLDialogElement>(null),
     titleId = useId(),
@@ -306,7 +308,7 @@ export function Modal({
   return createPortal(
     <dialog
       ref={ref}
-      className="taskdialog"
+      className={`taskdialog ${side ? "sidedialog" : ""}`}
       aria-labelledby={titleId}
       aria-describedby={description ? descriptionId : undefined}
       onCancel={(e) => {
@@ -321,7 +323,7 @@ export function Modal({
         <Button
           type="button"
           className="iconbutton dialogclose"
-          aria-label="关闭表单"
+          aria-label={side ? `关闭${title}` : "关闭表单"}
           pending={Boolean(busy)}
           onClick={onClose}
         >
@@ -367,19 +369,22 @@ export function Field({
 }) {
   return (
     <div className={`field ${error ? "invalidfield" : ""}`}>
-      <label htmlFor={id}>
-        {label}
-        {optional ? <span>可选</span> : null}
-      </label>
+      <div className="fieldlabel">
+        <label htmlFor={id}>
+          {label}
+          {optional ? <span>可选</span> : null}
+        </label>
+        {hint ? <InfoTip label={`${label}说明`}>{hint}</InfoTip> : null}
+      </div>
       {children}
       {error ? (
         <p id={`${id}-hint`} className="fielderror" role="alert">
           {error}
         </p>
       ) : hint ? (
-        <p className="fieldhint" id={`${id}-hint`}>
+        <span className="sr-only" id={`${id}-hint`}>
           {hint}
-        </p>
+        </span>
       ) : null}
     </div>
   );
@@ -400,7 +405,7 @@ export function FormFooter({
   const context = useContext(FooterContext);
   const footer = (
     <footer className="dialogfooter">
-      <span>{hint}</span>
+      {hint ? <InfoTip label="草稿说明">{hint}</InfoTip> : null}
       <Button
         type="button"
         className="secondary"
@@ -439,6 +444,59 @@ export function TaskError({ message }: { message?: string }) {
     </p>
   ) : null;
 }
+export function Pagination({
+  total,
+  page,
+  onChange,
+  size = 100,
+}: {
+  total: number;
+  page: number;
+  onChange: (page: number) => void;
+  size?: number;
+}) {
+  const pages = Math.max(1, Math.ceil(total / size));
+  if (pages === 1) return null;
+  return (
+    <nav className="pagination" aria-label="列表分页">
+      <Button
+        className="quiet"
+        disabled={page === 0}
+        onClick={() => onChange(page - 1)}
+      >
+        上一页
+      </Button>
+      <span>
+        {page + 1} / {pages} · 共 {total} 条
+      </span>
+      <Button
+        className="quiet"
+        disabled={page + 1 >= pages}
+        onClick={() => onChange(page + 1)}
+      >
+        下一页
+      </Button>
+    </nav>
+  );
+}
+export function InfoTip({
+  label,
+  children,
+}: {
+  label: string;
+  children: string;
+}) {
+  return (
+    <Button
+      type="button"
+      className="iconbutton infotip"
+      aria-label={label}
+      title={children}
+    >
+      <Icon name="info" size={15} />
+    </Button>
+  );
+}
 export function PageHeader({
   title,
   description,
@@ -451,8 +509,12 @@ export function PageHeader({
   return (
     <div className="resourceheading">
       <div>
-        <h1>{title}</h1>
-        {description ? <p>{description}</p> : null}
+        <div className="headinglabel">
+          <h1>{title}</h1>
+          {description ? (
+            <InfoTip label={`${title}说明`}>{description}</InfoTip>
+          ) : null}
+        </div>
       </div>
       <div className="headingactions">{children}</div>
     </div>
@@ -472,8 +534,12 @@ export function SettingRow({
   return (
     <div className="settingrow">
       <div className="settingcopy">
-        <label htmlFor={htmlFor}>{label}</label>
-        {description ? <p>{description}</p> : null}
+        <div className="headinglabel">
+          <label htmlFor={htmlFor}>{label}</label>
+          {description ? (
+            <InfoTip label={`${label}说明`}>{description}</InfoTip>
+          ) : null}
+        </div>
       </div>
       <div className="settingcontrol">{children}</div>
     </div>
@@ -964,13 +1030,15 @@ export function Disclosure({
   title,
   children,
   className = "",
+  open,
 }: {
   title: string;
   children: ReactNode;
   className?: string;
+  open?: boolean;
 }) {
   return (
-    <details className={`disclosure ${className}`}>
+    <details className={`disclosure ${className}`} open={open}>
       <summary>
         <Icon name="chevron" size={12} />
         <span>{title}</span>

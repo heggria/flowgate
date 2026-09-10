@@ -65,7 +65,7 @@ try {
       break;
   } while (Date.now() < deadline);
   assert(snapshot.traffic?.history?.length >= 18, "18 real samples received");
-  await page.getByText("实时更新", { exact: true }).waitFor();
+  await page.getByRole("region", { name: "运行指标" }).waitFor();
   assert(snapshot.traffic.download > 0);
   assert(snapshot.traffic.history.some((p) => p.downloadRate > 0));
   await page.screenshot({ path: "work/ui-live.png" });

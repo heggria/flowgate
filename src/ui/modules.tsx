@@ -55,15 +55,24 @@ function NodesPage(p: FeatureProps) {
       save={p.save}
       running={p.snapshot.kernel.status === "running"}
       appliedRevision={p.snapshot.kernel.appliedRevision}
+      appliedNode={
+        p.snapshot.appliedConnection?.selectedNode ??
+        (p.snapshot.kernel.appliedRevision === p.snapshot.configuration.revision
+          ? p.snapshot.configuration.settings.selectedNode
+          : undefined)
+      }
     />
   );
 }
 function RulesPage(p: FeatureProps) {
   return (
     <>
-      <Rules config={p.snapshot.configuration} save={p.save} />
-      <RuleSources {...p} />
-      <RoutePreview />
+      <Rules
+        config={p.snapshot.configuration}
+        save={p.save}
+        preview={<RoutePreview config={p.snapshot.configuration} />}
+        sources={<RuleSources {...p} />}
+      />
     </>
   );
 }
@@ -75,6 +84,7 @@ function SettingsPage(p: FeatureProps) {
         save={p.save}
         run={p.run}
         busy={p.busy}
+        systemControl={p.snapshot.kernel.systemControl}
       />
       {p.settingsContributions?.map((Component, index) => (
         <Component key={index} {...p} />
@@ -85,7 +95,7 @@ function SettingsPage(p: FeatureProps) {
 function ConnectionsPage(p: FeatureProps) {
   return (
     <>
-      <PageHeader title="连接" description="查看经过代理的连接、出口与流量。" />
+      <PageHeader title="连接" />
       <Traffic
         traffic={p.snapshot.traffic}
         configuration={p.snapshot.configuration}
