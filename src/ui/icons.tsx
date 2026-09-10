@@ -1,19 +1,22 @@
+import brand from "../../assets/brand/mark.json";
 const paths: Record<string, string> = {
   copy: "M8 8h12v13H8z M16 8V3H3v13h5",
   density: "M4 5h16 M4 10h16 M4 15h16 M4 20h16",
   check: "M5 12l4 4L19 6",
   circle: "M20 12a8 8 0 1 1-16 0 8 8 0 0 1 16 0",
   info: "M12 11v6 M12 7h.01 M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0",
-  overview: "M3 3h7v7H3z M14 3h7v7h-7z M3 14h7v7H3z M14 14h7v7h-7z",
-  connections: "M2 12h4l3-8 6 16 3-8h4",
-  nodes: "M4 5h16v5H4z M4 14h16v5H4z M7 7.5h.01 M7 16.5h.01",
-  rules: "M6 3v12a4 4 0 0 0 4 4h8 M14 15l4 4-4 4 M6 7h12 M14 3l4 4-4 4",
+  brand: brand.gate + " " + brand.streams,
+  overview: "M4 4h6v7H4z M14 4h6v4h-6z M14 12h6v8h-6z M4 15h6v5H4z",
+  connections: "M4 8h12 M13 5l3 3-3 3 M20 16H8 M11 13l-3 3 3 3",
+  nodes:
+    "M6 4h12a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z M6 15h12a2 2 0 0 1 2 2v1a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-1a2 2 0 0 1 2-2z M7.5 7.5h.01 M7.5 17.5h.01",
+  rules: "M5 4v12a3 3 0 0 0 3 3h11 M5 8h14 M16 5l3 3-3 3 M16 16l3 3-3 3",
   network:
     "M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0 M3 12h18 M12 3c5 5 5 13 0 18-5-5-5-13 0-18",
-  activity: "M8 3H4v18h16V3h-4 M8 2h8v4H8z M8 11h8 M8 16h6",
+  activity:
+    "M8 4h8a3 3 0 0 1 3 3v11a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a3 3 0 0 1 3-3z M9 4V3h6v3H9V4 M9 11h6 M9 15h4",
   settings: "M4 7h16 M4 17h16 M9 4v6 M15 14v6",
-  extensions:
-    "M9 3H3v6h3a3 3 0 0 1 0 6H3v6h6v-3a3 3 0 0 1 6 0v3h6v-6h-3a3 3 0 0 1 0-6h3V3h-6v3a3 3 0 0 1-6 0z",
+  extensions: "M5 5h5v5H5z M14 5h5v5h-5z M5 14h5v5H5z M16.5 13v7 M13 16.5h7",
   search: "M16 16l5 5 M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0",
   refresh: "M20 7V2 M20 7h-5 M20 7a9 9 0 1 0 1 8",
   power: "M12 2v10 M6 5a9 9 0 1 0 12 0",
@@ -33,10 +36,11 @@ export function Icon({ name, size = 17 }: { name: string; size?: number }) {
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth="1.6"
+      strokeWidth={name === "brand" ? brand.strokeWidth : 1.75}
       strokeLinecap="round"
       strokeLinejoin="round"
       aria-hidden="true"
+      focusable="false"
     >
       <path d={paths[name] ?? paths.network} />
     </svg>

@@ -1,6 +1,8 @@
 import { beforeDeadline } from "../../runtime/src/deadline";
 import { BUILD_VERSION } from "../../contracts/src/version";
-import { BrowserWindow, Tray, Menu, nativeImage } from "electron";
+import { BrowserWindow, nativeImage } from "electron";
+import { readAppearance, subscribeAppearance } from "./appearance";
+import { MenuBarController } from "./menu-bar";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { backgroundTest } from "./test-mode";
@@ -9,13 +11,20 @@ export class DesktopShell {
   uiIdentity = { releaseSet: "bundled", hostVersion: BUILD_VERSION };
   uiEpoch = ++nextRendererEpoch;
   private readyResolve?: () => void;
+  ready = false;
   markReady() {
+    this.ready = true;
     this.readyResolve?.();
     this.readyResolve = undefined;
   }
   window?: BrowserWindow;
-  private tray?: Tray;
+  private tray?: MenuBarController;
   private rendererFailures = 0;
+  private removeAppearanceListener: () => void;
+  private appearanceChanged = () => {
+    if (this.window && !this.window.isDestroyed())
+      this.window.webContents.send("shell:appearance", readAppearance());
+  };
   quitting = false;
   recovering = false;
   constructor(
@@ -23,10 +32,14 @@ export class DesktopShell {
     public uiPath: string,
     readonly actions: {
       quit: () => void;
+      connect: () => void;
       disconnect: () => void;
+      navigate: (route: string) => void;
       rendererFault?: () => Promise<boolean>;
     },
-  ) {}
+  ) {
+    this.removeAppearanceListener = subscribeAppearance(this.appearanceChanged);
+  }
   authorize(event: Electron.IpcMainInvokeEvent) {
     if (
       !this.window ||
@@ -45,7 +58,7 @@ export class DesktopShell {
       return;
     }
     const window = new BrowserWindow({
-      show: !backgroundTest,
+      show: false,
       focusable: !backgroundTest,
       skipTaskbar: backgroundTest,
       width: 1320,
@@ -64,6 +77,11 @@ export class DesktopShell {
       },
     });
     this.window = window;
+    this.ready = false;
+    window.once("ready-to-show", () => {
+      if (!backgroundTest && !this.quitting && this.window === window)
+        window.show();
+    });
     this.uiEpoch = ++nextRendererEpoch;
     window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
     window.webContents.on("will-navigate", (e) => e.preventDefault());
@@ -99,23 +117,25 @@ export class DesktopShell {
   }
   installTray() {
     if (backgroundTest) return;
-    const icon = nativeImage.createFromDataURL(
-      "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAGElEQVQ4T2NkYGD4z0ABYBw1YNSAUQMGAAAcEAERrxJuWQAAAABJRU5ErkJggg==",
+    const icon = nativeImage.createFromPath(
+      join(this.bundle, "assets/menuBarTemplate.png"),
     );
-    icon.setTemplateImage(true);
-    this.tray = new Tray(icon);
-    this.tray.setToolTip("FlowGate");
-    this.tray.setContextMenu(
-      Menu.buildFromTemplate([
-        { label: "打开 FlowGate", click: () => this.open() },
-        { label: "断开代理", click: this.actions.disconnect },
-        { type: "separator" },
-        { label: "退出 FlowGate", click: this.actions.quit },
-      ]),
-    );
-    this.tray.on("click", () => this.open());
+    this.tray = new MenuBarController(icon, {
+      open: () => this.open(),
+      settings: () => this.actions.navigate("settings"),
+      connect: this.actions.connect,
+      disconnect: this.actions.disconnect,
+      quit: this.actions.quit,
+    });
+    this.tray.install();
   }
+  dispose() {
+    this.removeAppearanceListener();
+    this.tray?.dispose();
+  }
+
   recovery() {
+    this.tray?.update({ kernel: { status: "unknown" } });
     const window = this.window;
     this.window = undefined;
     window?.destroy();
@@ -144,6 +164,7 @@ export class DesktopShell {
     this.uiEpoch = ++nextRendererEpoch;
     if (path !== this.uiPath) this.rendererFailures = 0;
     this.uiPath = path;
+    this.ready = false;
     this.recovering = false;
     if (this.window?.webContents.isCrashed()) {
       const crashed = this.window;
@@ -166,6 +187,7 @@ export class DesktopShell {
     await health;
   }
   publish(snapshot: unknown) {
+    this.tray?.update(snapshot);
     if (this.window && !this.window.isDestroyed() && !this.recovering)
       this.window.webContents.send("client:snapshot", snapshot);
   }

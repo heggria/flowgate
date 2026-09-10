@@ -1,3 +1,4 @@
+import { useAppearance } from "./appearance";
 import { Button, InfoTip } from "./components";
 import React, {
   useState,
@@ -36,9 +37,7 @@ function App({ routes }: { routes: RouteContribution[] }) {
     [busy, setBusy] = useState(false),
     [notice, setNotice] = useState(""),
     [query, setQuery] = useState(""),
-    [theme, setTheme] = useState(
-      () => localStorage.getItem("flowgate.theme") ?? "light",
-    );
+    [theme, setTheme] = useAppearance();
   const [settingsDraft, setSettingsDraft] = useState<{
     port?: string;
     dns?: string;
@@ -94,14 +93,11 @@ function App({ routes }: { routes: RouteContribution[] }) {
   useEffect(
     () =>
       window.shell.onNavigate?.((route) => {
-        if (routes.some((r) => r.id === route)) setPage(route);
+        if (route === "__search") search.current?.focus();
+        else if (routes.some((r) => r.id === route)) setPage(route);
       }),
     [routes],
   );
-  useEffect(() => {
-    document.documentElement.dataset.theme = theme;
-    localStorage.setItem("flowgate.theme", theme);
-  }, [theme]);
   useEffect(() => {
     const handle = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
@@ -257,7 +253,7 @@ function App({ routes }: { routes: RouteContribution[] }) {
       <aside className="sidebar">
         <div className="brand">
           <span className="brandmark">
-            <Icon name="connections" size={20} />
+            <Icon name="brand" size={22} />
           </span>
           FlowGate
         </div>
@@ -360,7 +356,7 @@ function App({ routes }: { routes: RouteContribution[] }) {
           <Button
             className="iconbutton"
             aria-label={theme === "light" ? "切换深色外观" : "切换浅色外观"}
-            onClick={() => setTheme((t) => (t === "light" ? "dark" : "light"))}
+            onClick={() => setTheme(theme === "light" ? "dark" : "light")}
           >
             <Icon name="sun" size={16} />
           </Button>
