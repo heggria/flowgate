@@ -30,6 +30,9 @@ await walk("dist/release");
 const packageVersion = JSON.parse(
   await readFile("package.json", "utf8"),
 ).version;
+const compatibility = JSON.parse(
+  await readFile("packages/contracts/src/compatibility.json", "utf8"),
+);
 const manifest = {
   id,
   version,
@@ -42,9 +45,9 @@ const manifest = {
     extension: packageVersion,
   },
   releaseNotes: process.env.FLOWGATE_RELEASE_NOTES ?? "",
-  shellApi: { min: 1, max: 1 },
+  shellApi: { min: compatibility.shellApi, max: compatibility.shellApi },
   protocol: 1,
-  schema: { min: 1, max: 1 },
+  schema: { min: compatibility.schema, max: compatibility.schema },
   ui: "index.html",
   service: "service.cjs",
   extension: "extension.cjs",

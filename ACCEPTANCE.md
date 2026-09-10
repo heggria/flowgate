@@ -53,3 +53,13 @@ Developer ID 同团队签名、公证、正式 helper 注册与管理员批准�
 真实外网修复前后记录为 `work/external-network.log`、`work/external-network-no-bind.log`、`work/external-network-fixed.log`；外部 IPv6 失败保留在 `work/external-ipv6.log`。失败证据未删除。
 
 短时持续检查 `work/sustained-result.json`：252 秒内完成 120 个本地请求与 6 个外部 HTTPS 请求，内核 PID 和 Service 代次保持不变，窗口始终隐藏；这不等于日常时长或真实睡眠验收。远程首次慢环境发现规则弹窗关闭前的重复文本定位，测试改为先等待关闭再检查保存内容，`work/e2e-dialog-recheck.log` 复验通过。
+
+## 多格式订阅集成（0.3，2026-09-10）
+
+本轮全套 `npm run verify` 通过：87 项单元测试、真实 HTTPS 订阅预览和确认、7 种协议及 6 种 VMess 来源格式的本地 TCP/UDP 转发、签名更新与回滚、扩展生命周期、凭据、电源/取消、完整 UI 路径及 96 组布局。证据为 `work/subscription-integration/verify.log`。最后增加的“无有效条件请求时拒绝 304”保护另经 18 项订阅测试复验，见 `final-focused.log`；最终构建/订阅端到端及后台检查另存同目录。
+
+用户提供的 9 个在线端点经新版 HTTPS 获取、已验证扩展中的解析线程、内核配置检查全部通过：8 个来源各 48 个节点，URI 来源 50 条（含 2 个信息条目）。结果与读取时间见 `work/subscription-integration/live-results.json`，不包含订阅密钥。此项没有连接真实供应商节点，不能当作这些节点的外网可用性验证。
+
+可选完整配置迁移已通过真实本地出口选择、IP 规则、组成员切换和重启持久化。原始供应商完整配置包含地理/ASN/User-Agent 等规则和其他不兼容资源，完整模式会阻止提交并列明原因；默认节点模式均可导入。实现范围、数据升级与架构边界见 [SUBSCRIPTIONS.md](SUBSCRIPTIONS.md)。
+
+本地依赖审计曾因 npm 官方审计接口连接超时未返回结果；该失败未当作安全检查通过。远程必需检查继续执行相同审计，最终 PR 与安装包证据在交付记录中给出。原有证书延期和真实系统网络验收边界不变。

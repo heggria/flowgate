@@ -49,12 +49,15 @@ export interface NodeConfig {
   server: string;
   port: number;
   options: Record<string, unknown>;
+  /** Only normalized v2 nodes may enable newly admitted outbound options. */
+  optionsVersion?: 2;
   sourceId?: string;
 }
 export interface Rule {
   sourceId?: string;
   id: string;
-  kind: "domain_suffix" | "domain" | "ip_cidr" | "process_name";
+  kind:
+    "domain_suffix" | "domain" | "domain_keyword" | "ip_cidr" | "process_name";
   value: string;
   outbound: string;
 }
@@ -65,6 +68,26 @@ export interface Subscription {
   updatedAt?: string;
   count: number;
   error?: string;
+  conversion?: import("./subscriptions").SubscriptionSummary;
+  metadata?: import("./subscriptions").SubscriptionMetadata;
+  parseOptions?: import("./subscriptions").SubscriptionParseOptions;
+  etag?: string;
+  lastModified?: string;
+  refreshHours?: number;
+  migration?: "nodes" | "profile";
+  /** Derived for redacted UI snapshots. */
+  canRefresh?: boolean;
+}
+export interface ProxyGroup {
+  id: string;
+  name: string;
+  sourceId: string;
+  type: "selector" | "urltest";
+  members: string[];
+  selected?: string;
+  url?: string;
+  interval?: number;
+  tolerance?: number;
 }
 export interface Settings {
   mode: "manual" | "system" | "tun";
@@ -91,9 +114,10 @@ export interface RuleSource {
   error?: string;
 }
 export interface Configuration {
-  schema: 1;
+  schema: 1 | 2;
   revision: number;
   nodes: NodeConfig[];
+  groups?: ProxyGroup[];
   subscriptions: Subscription[];
   ruleSources?: RuleSource[];
   externalNetworks?: ExternalNetwork[];

@@ -2,8 +2,8 @@
   {
     "id": "builtin.subscription",
     "name": "订阅与节点解析",
-    "description": "导入和刷新 HTTPS 订阅，将受支持的配置转换为节点。",
-    "version": "1.0.0",
+    "description": "解析多格式订阅，在隔离工作线程中转换节点并生成策略、规则和 DNS 迁移诊断。",
+    "version": "2.0.0",
     "required": true,
     "defaultEnabled": true,
     "dependencies": [],

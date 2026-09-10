@@ -1,5 +1,5 @@
 import { Button, SearchField, EmptyState } from "../components";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import type {
   Configuration,
   NodeConfig,
@@ -9,6 +9,7 @@ import { ConfirmAction } from "../ConfirmAction";
 import { useDraft } from "../drafts";
 import {
   ActionMenu,
+  Combobox,
   Field,
   FormFooter,
   Modal,
@@ -17,6 +18,10 @@ import {
   useTask,
 } from "../components";
 import { Icon } from "../icons";
+import {
+  ImportSubscription,
+  SubscriptionMetadataLine,
+} from "./SubscriptionImport";
 function NodeEditor({
   node,
   revision,
@@ -106,194 +111,6 @@ function NodeEditor({
     </Modal>
   );
 }
-function ImportSubscription({
-  close,
-  imported,
-}: {
-  close: () => void;
-  imported: () => void;
-}) {
-  const draft = useDraft("subscription-create", {
-    name: "",
-    mode: "url",
-    url: "",
-  });
-  const [text, setText] = useState(""),
-    [legacyReady, setLegacyReady] = useState(false),
-    [draftError, setDraftError] = useState(""),
-    [urlError, setUrlError] = useState("");
-  const edited = useRef(false),
-    task = useTask();
-  useEffect(() => {
-    let alive = true;
-    void window.shell
-      .request("ui.draft.get")
-      .then((value) => {
-        if (alive && !edited.current) setText(String(value ?? ""));
-      })
-      .catch(() => setDraftError("草稿恢复失败，请检查输入"))
-      .finally(() => {
-        if (alive) setLegacyReady(true);
-      });
-    return () => {
-      alive = false;
-    };
-  }, []);
-  const validate = () => {
-    try {
-      if (new URL(draft.value.url).protocol !== "https:")
-        return "订阅链接需要以 https:// 开头。";
-      return "";
-    } catch {
-      return "请填写完整的 HTTPS 订阅链接。";
-    }
-  };
-  return (
-    <Modal
-      title="添加订阅"
-      description="用一个链接管理节点，也可以直接导入配置。"
-      onClose={close}
-      busy={task.pending}
-      onCancelRequest={() => {
-        void task.cancel();
-      }}
-    >
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          const error = draft.value.mode === "url" ? validate() : "";
-          setUrlError(error);
-          if (error) {
-            document.getElementById("subscription-url")?.focus();
-            return;
-          }
-          void task.execute(async () => {
-            await task.request(
-              "subscription.import",
-              draft.value.mode === "url"
-                ? {
-                    url: draft.value.url.trim(),
-                    name: draft.value.name.trim() || undefined,
-                  }
-                : { text },
-            );
-            await window.shell.request("ui.draft.set", "");
-            await draft.clear({ name: "", mode: draft.value.mode, url: "" });
-            imported();
-            close();
-          });
-        }}
-      >
-        <div className="entrytabs" role="group" aria-label="导入方式">
-          {[
-            { id: "url", name: "订阅链接" },
-            { id: "text", name: "配置文本" },
-          ].map((mode) => (
-            <Button
-              key={mode.id}
-              type="button"
-              aria-pressed={draft.value.mode === mode.id}
-              onClick={() => draft.change({ mode: mode.id })}
-            >
-              {mode.name}
-            </Button>
-          ))}
-        </div>
-        {draft.value.mode === "url" ? (
-          <>
-            <Field id="subscription-name" label="订阅名称" optional>
-              <input
-                id="subscription-name"
-                maxLength={100}
-                value={draft.value.name}
-                placeholder="例如：工作网络"
-                onChange={(e) => draft.change({ name: e.target.value })}
-              />
-            </Field>
-            <Field
-              id="subscription-url"
-              label="订阅链接"
-              hint="使用服务商提供的 HTTPS 地址。"
-              error={urlError}
-            >
-              <div className="inputgroup">
-                <Icon name="arrow" size={15} />
-                <input
-                  id="subscription-url"
-                  aria-describedby="subscription-url-hint"
-                  aria-invalid={!!urlError}
-                  autoFocus
-                  data-autofocus="true"
-                  required
-                  type="text"
-                  spellCheck={false}
-                  autoComplete="off"
-                  placeholder="https://example.com/subscribe"
-                  value={draft.value.url}
-                  onBlur={() => {
-                    if (draft.value.url) setUrlError(validate());
-                  }}
-                  onChange={(e) => {
-                    draft.change({ url: e.target.value });
-                    setUrlError("");
-                  }}
-                />
-                <Button
-                  type="button"
-                  aria-label="清除订阅链接"
-                  onClick={() => {
-                    draft.change({ url: "" });
-                    setUrlError("");
-                    document.getElementById("subscription-url")?.focus();
-                  }}
-                >
-                  <Icon name="close" size={13} />
-                </Button>
-              </div>
-            </Field>
-          </>
-        ) : (
-          <Field
-            id="subscription-text"
-            label="节点链接或配置"
-            hint="支持节点分享链接、sing-box 与 Clash 配置。"
-          >
-            <textarea
-              id="subscription-text"
-              aria-label="订阅链接或配置"
-              required
-              rows={7}
-              spellCheck={false}
-              value={text}
-              placeholder="粘贴节点分享链接或配置内容"
-              onChange={(e) => {
-                edited.current = true;
-                setText(e.target.value);
-                void window.shell
-                  .request("ui.draft.set", e.target.value)
-                  .then(() => setDraftError(""))
-                  .catch(() => setDraftError("草稿未保存，请缩减输入后重试"));
-              }}
-            />
-          </Field>
-        )}
-        <TaskError message={task.error || draftError || draft.error} />
-        <FormFooter
-          onClose={close}
-          pending={task.pending}
-          ready={
-            draft.ready &&
-            legacyReady &&
-            !!(draft.value.mode === "url"
-              ? draft.value.url.trim()
-              : text.trim())
-          }
-          label={draft.value.mode === "url" ? "添加订阅" : "导入节点"}
-        />
-      </form>
-    </Modal>
-  );
-}
 export function Nodes({
   config,
   run,
@@ -312,6 +129,7 @@ export function Nodes({
   const [query, setQuery] = useState(""),
     [editing, setEditing] = useState<string | null>(null),
     [adding, setAdding] = useState(false),
+    [refreshing, setRefreshing] = useState<string | null>(null),
     [renaming, setRenaming] = useState(false),
     [notice, setNotice] = useState("");
   const sourceDraft = useDraft("subscription-name", { id: "", name: "" }),
@@ -460,6 +278,70 @@ export function Nodes({
           </EmptyState>
         )}
       </section>
+      {(config.groups ?? []).length ? (
+        <section className="resourcesection" aria-label="策略组">
+          <div className="resourcetools">
+            <h2>
+              策略组 <span className="count">{config.groups!.length}</span>
+            </h2>
+            <span className="hint">选择成员后应用配置生效</span>
+          </div>
+          {config.groups!.map((group) => (
+            <div className="subscriptionrow" key={group.id}>
+              <span className="sourceicon">
+                <Icon name="nodes" size={16} />
+              </span>
+              <div>
+                <strong>{group.name}</strong>
+                <small>
+                  {group.type === "urltest" ? "自动测速选择" : "手动选择"} ·{" "}
+                  {group.members.length} 个成员
+                </small>
+                {group.type === "selector" ? (
+                  <Combobox
+                    label={`策略组 ${group.name} 的成员`}
+                    value={group.selected ?? group.members[0]}
+                    options={group.members.map((id) => ({
+                      value: id,
+                      label:
+                        id === "direct"
+                          ? "直连"
+                          : (config.nodes.find((node) => node.id === id)
+                              ?.name ??
+                            config.groups?.find((entry) => entry.id === id)
+                              ?.name ??
+                            "不可用成员"),
+                    }))}
+                    onChange={(member) => {
+                      void run(() =>
+                        mutation("group.select", {
+                          id: group.id,
+                          member,
+                          revision: config.revision,
+                        }),
+                      );
+                    }}
+                  />
+                ) : null}
+              </div>
+              <Button
+                className="quiet"
+                disabled={config.settings.selectedNode === group.id}
+                onClick={() =>
+                  void save({
+                    ...config,
+                    settings: { ...config.settings, selectedNode: group.id },
+                  })
+                }
+              >
+                {config.settings.selectedNode === group.id
+                  ? "✓ 已选择"
+                  : "选择出口"}
+              </Button>
+            </div>
+          ))}
+        </section>
+      ) : null}
       <section className="resourcesection subscriptions">
         <div className="resourcetools">
           <h2>
@@ -482,13 +364,42 @@ export function Nodes({
                     ? new Date(s.updatedAt).toLocaleString()
                     : "尚未更新"}
                 </small>
+                <SubscriptionMetadataLine metadata={s.metadata} />
+                {s.conversion ? (
+                  <small>
+                    {s.conversion.format} ·{" "}
+                    {s.refreshHours
+                      ? `每 ${s.refreshHours} 小时更新`
+                      : "自动更新关闭"}
+                  </small>
+                ) : null}
+                {s.conversion ? (
+                  <details className="subscriptionrecord">
+                    <summary>转换记录</summary>
+                    <p>
+                      {s.conversion.groups} 个来源策略组 · {s.conversion.rules}{" "}
+                      条来源规则 ·{" "}
+                      {s.migration === "profile"
+                        ? "完整配置迁移"
+                        : "仅导入节点"}
+                    </p>
+                    {s.conversion.diagnostics.length ? (
+                      <ul>
+                        {s.conversion.diagnostics.map((diagnostic, index) => (
+                          <li key={index}>{diagnostic.message}</li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p>未发现转换问题。</p>
+                    )}
+                  </details>
+                ) : null}
                 {s.error ? <TaskError message={s.error} /> : null}
               </div>
               <Button
                 className="quiet"
-                onClick={() =>
-                  run(() => mutation("subscription.refresh", { id: s.id }))
-                }
+                disabled={!s.canRefresh}
+                onClick={() => setRefreshing(s.id)}
               >
                 更新
               </Button>
@@ -514,7 +425,7 @@ export function Nodes({
           ))
         ) : (
           <p className="sectionempty">
-            暂无订阅来源。直接导入的配置保留为本地节点。
+            暂无订阅来源。添加链接或导入配置后，可在这里查看转换结果。
           </p>
         )}
       </section>
@@ -525,6 +436,16 @@ export function Nodes({
             setQuery("");
             setNotice("代理资源已添加，请在列表中选择出口。");
           }}
+        />
+      ) : null}
+      {refreshing && config.subscriptions.some((s) => s.id === refreshing) ? (
+        <ImportSubscription
+          key={refreshing}
+          source={config.subscriptions.find((s) => s.id === refreshing)!}
+          close={() => setRefreshing(null)}
+          imported={() =>
+            setNotice("订阅已更新。运行中的连接仍使用已应用的配置。 ")
+          }
         />
       ) : null}
       {node ? (

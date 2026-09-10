@@ -68,6 +68,7 @@ export function Overview({
       ? names(c.settings.selectedNode)
       : (c.nodes.find((n) => n.id === id)?.name ??
         c.externalNetworks?.find((n) => n.id === id)?.name ??
+        c.groups?.find((group) => group.id === id)?.name ??
         (id === "direct" ? "直连" : id === "proxy" ? "代理" : id));
   return (
     <>

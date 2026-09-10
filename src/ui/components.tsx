@@ -502,6 +502,12 @@ export function outletChoices(config: Configuration): Choice[] {
       detail: "拒绝匹配的连接",
       group: "通用出口",
     },
+    ...(config.groups ?? []).map((group) => ({
+      value: group.id,
+      label: group.name,
+      detail: `${group.members.length} 个成员`,
+      group: "策略组",
+    })),
     ...config.nodes.map((n) => ({
       value: n.id,
       label: n.name,

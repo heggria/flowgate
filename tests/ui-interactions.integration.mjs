@@ -112,10 +112,10 @@ try {
     const url = dialog.getByRole("textbox", { name: "订阅链接", exact: true });
     await url.fill("https://example.com/test");
     await p.evaluate(
-      () => (uiFixture.outcomes["subscription.import"] = "hold"),
+      () => (uiFixture.outcomes["subscription.preview"] = "hold"),
     );
     const submit = dialog.getByRole("button", {
-      name: "添加订阅",
+      name: "预览转换",
       exact: true,
     });
     await submit.hover();
@@ -137,17 +137,19 @@ try {
     await focus(processing);
     assert.equal(await processing.getAttribute("aria-busy"), "true");
     const count = await p.evaluate(
-      () => uiFixture.calls["subscription.import"],
+      () => uiFixture.calls["subscription.preview"],
     );
     await p.keyboard.press("Enter");
     await p.keyboard.press("Space");
     assert.equal(
-      await p.evaluate(() => uiFixture.calls["subscription.import"]),
+      await p.evaluate(() => uiFixture.calls["subscription.preview"]),
       count,
     );
-    await p.evaluate(() => uiFixture.finish("subscription.import", "测试失败"));
+    await p.evaluate(() =>
+      uiFixture.finish("subscription.preview", "测试失败"),
+    );
     await dialog.getByRole("alert").waitFor();
-    await focus(dialog.getByRole("button", { name: "添加订阅", exact: true }));
+    await focus(dialog.getByRole("button", { name: "预览转换", exact: true }));
     await p.keyboard.press("Escape");
     await nav("设置");
     const disabled = p.locator("button:disabled").first();

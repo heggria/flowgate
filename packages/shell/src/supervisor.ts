@@ -1,6 +1,9 @@
 import { requestTrace } from "../../runtime/src/trace-context";
 import { TraceBuffer } from "../../runtime/src/lifecycle";
-import { BUILD_VERSION } from "../../contracts/src/version";
+import {
+  BUILD_VERSION,
+  CONFIGURATION_SCHEMA,
+} from "../../contracts/src/version";
 import { utilityProcess } from "electron";
 import { randomUUID } from "node:crypto";
 import type { RpcResponse } from "../../contracts/src/index";
@@ -280,7 +283,7 @@ export class ProcessSupervisor {
         epoch: this.epoch,
         shellVersion: BUILD_VERSION,
         protocolVersion: 1,
-        schemaVersion: 1,
+        schemaVersion: CONFIGURATION_SCHEMA,
       };
       const tracked = !["snapshot", "health", "status"].includes(method);
       if (tracked)

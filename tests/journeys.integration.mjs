@@ -37,7 +37,8 @@ try {
       ],
     }),
   );
-  await p.getByRole("button", { name: "导入节点", exact: true }).click();
+  await p.getByRole("button", { name: "预览转换", exact: true }).click();
+  await p.getByRole("button", { name: "确认导入", exact: true }).click();
   await p.getByText("Journey node", { exact: true }).waitFor();
   await p.getByRole("dialog").waitFor({ state: "hidden" });
   await p.getByRole("button", { name: "选择出口", exact: true }).click();
