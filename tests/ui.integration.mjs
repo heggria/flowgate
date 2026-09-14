@@ -34,6 +34,12 @@ try {
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.getByRole("heading", { name: "概览", exact: true }).waitFor();
+  await page.evaluate(() =>
+    window.shell.request("appearance.set", { source: "light" }),
+  );
+  await page.waitForFunction(
+    () => document.documentElement.dataset.theme === "light",
+  );
   const listenPort = await isolateProxyPort(page);
   await page.screenshot({ path: "work/ui-empty.png" });
   await page.getByRole("button", { name: "启动代理", exact: true }).click();
