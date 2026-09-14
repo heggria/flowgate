@@ -1,3 +1,4 @@
+import { shellRequest } from "../../../packages/client/src/index";
 import {
   Button,
   Combobox,
@@ -34,8 +35,7 @@ export function ReleaseUpdates({
   const [channel, setChannel] = useState<"stable" | "preview">("stable");
   useEffect(() => {
     let active = true;
-    void window.shell
-      .request("release.status")
+    void shellRequest("release.status")
       .then((value: any) => {
         if (!active) return;
         setReleaseStatus(value);
@@ -77,7 +77,7 @@ export function ReleaseUpdates({
         {releaseStatus?.revoked?.includes(releaseStatus.release) ? (
           <Button
             className="secondary"
-            onClick={() => run(() => window.shell.request("recovery.restore"))}
+            onClick={() => run(() => shellRequest("recovery.restore"))}
           >
             恢复内置版本
           </Button>
@@ -122,7 +122,7 @@ export function ReleaseUpdates({
             setUpdateFailed(false);
             setUpdateMessage("正在验证更新目录…");
             try {
-              const candidate = (await window.shell.request("release.check", {
+              const candidate = (await shellRequest("release.check", {
                 channel,
               })) as ReleaseSet;
               setCandidate(candidate);
@@ -135,9 +135,9 @@ export function ReleaseUpdates({
             } finally {
               setChecking(false);
               setReleaseStatus(
-                (await window.shell
-                  .request("release.status")
-                  .catch(() => releaseStatus)) as any,
+                (await shellRequest("release.status").catch(
+                  () => releaseStatus,
+                )) as any,
               );
             }
           })
@@ -196,9 +196,7 @@ export function ReleaseUpdates({
           className="primary"
           pending={Boolean(busy || checking || releaseStatus?.updating)}
           onClick={() =>
-            run(() =>
-              window.shell.request("release.activate", { id: candidate.id }),
-            )
+            run(() => shellRequest("release.activate", { id: candidate.id }))
           }
         >
           应用更新
@@ -208,14 +206,14 @@ export function ReleaseUpdates({
         <Button
           className="quiet"
           pending={Boolean(busy || checking)}
-          onClick={() => run(() => window.shell.request("window.reload"))}
+          onClick={() => run(() => shellRequest("window.reload"))}
         >
           重新加载界面
         </Button>
         <Button
           className="quiet"
           pending={Boolean(busy || checking)}
-          onClick={() => run(() => window.shell.request("application.check"))}
+          onClick={() => run(() => shellRequest("application.check"))}
         >
           检查完整应用更新
         </Button>
