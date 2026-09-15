@@ -9,7 +9,10 @@ import {
   InfoTip,
 } from "../components";
 import { useEffect, useState } from "react";
-import type { ReleaseSet } from "../../../packages/contracts/src/index";
+import type {
+  ApplicationUpdateState,
+  ReleaseSet,
+} from "../../../packages/contracts/src/index";
 import type { ExtensionState } from "../../../packages/contracts/src/extensions";
 export function ReleaseUpdates({
   run,
@@ -29,15 +32,30 @@ export function ReleaseUpdates({
     versions?: Record<string, unknown>;
     events?: { stage: string; at: string; releaseSet: string }[];
   } | null>(null);
+  const [application, setApplication] = useState<ApplicationUpdateState | null>(
+    null,
+  );
+  const acceptApplication = (next?: ApplicationUpdateState) => {
+    if (next)
+      setApplication((current) =>
+        current && current.revision > next.revision ? current : next,
+      );
+  };
+  const applicationBusy =
+    application?.phase === "checking" || application?.phase === "downloading";
   const [updateMessage, setUpdateMessage] = useState("");
   const [checking, setChecking] = useState(false),
     [updateFailed, setUpdateFailed] = useState(false);
   const [channel, setChannel] = useState<"stable" | "preview">("stable");
   useEffect(() => {
     let active = true;
+    const unsubscribe = window.shell.onApplicationUpdate?.((value) => {
+      if (active) acceptApplication(value);
+    });
     void shellRequest("release.status")
       .then((value: any) => {
         if (!active) return;
+        acceptApplication(value.application);
         setReleaseStatus(value);
         setChannel(value.channel ?? "stable");
       })
@@ -49,6 +67,7 @@ export function ReleaseUpdates({
       });
     return () => {
       active = false;
+      unsubscribe?.();
     };
   }, []);
   const [candidate, setCandidate] = useState<ReleaseSet | null>(null);
@@ -202,6 +221,13 @@ export function ReleaseUpdates({
           应用更新
         </Button>
       ) : null}
+      {application?.phase === "failed" ? (
+        <TaskError message={application.message} />
+      ) : application ? (
+        <p className="inlinestatus" role="status">
+          {application.message}
+        </p>
+      ) : null}
       <div className="sectionactions">
         <Button
           className="quiet"
@@ -212,8 +238,20 @@ export function ReleaseUpdates({
         </Button>
         <Button
           className="quiet"
-          pending={Boolean(busy || checking)}
-          onClick={() => run(() => shellRequest("application.check"))}
+          pending={Boolean(busy || checking || applicationBusy)}
+          disabled={application?.phase === "ready"}
+          onClick={() =>
+            run(async () => {
+              try {
+                await shellRequest("application.check");
+              } finally {
+                const status = (await shellRequest("release.status").catch(
+                  () => null,
+                )) as { application?: ApplicationUpdateState } | null;
+                acceptApplication(status?.application);
+              }
+            })
+          }
         >
           检查完整应用更新
         </Button>
