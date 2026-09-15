@@ -218,6 +218,24 @@ async function routeInterface(address: string) {
 }
 async function startPeer() {
   assert.equal(await peerPID(), undefined);
+  const interfaces = new Set(
+    (await exec("/sbin/ifconfig", ["-l"])).stdout.trim().split(/\s+/),
+  );
+  const interfaceName = Array.from(
+    { length: 100 },
+    (_, index) => `utun${900 + index}`,
+  ).find((name) => !interfaces.has(name));
+  assert.ok(interfaceName, "No unused independent peer interface");
+  await writeFile(
+    peerConfiguration,
+    JSON.stringify(
+      independentTUNConfiguration(
+        (peerProxy.address() as any).port,
+        interfaceName,
+      ),
+    ),
+  );
+  await exec(kernelPath, ["check", "-c", peerConfiguration]);
   peer = spawn(
     "/usr/bin/sudo",
     ["-n", kernelPath, "run", "-c", peerConfiguration],
@@ -369,13 +387,6 @@ try {
     }
   // Coexistence at the native/helper boundary, not a simulated observation and
   // not an assertion about the Service's full VPN-change coordination policy.
-  await writeFile(
-    peerConfiguration,
-    JSON.stringify(
-      independentTUNConfiguration((peerProxy.address() as any).port),
-    ),
-  );
-  await exec(kernelPath, ["check", "-c", peerConfiguration]);
   await startPeer();
   const peerInterface = await routeInterface("198.18.0.89");
   native = new NativeSession(
@@ -443,6 +454,27 @@ try {
   let own = await startFlowGate();
   await checkBoth();
   assert.notEqual(own.tunInterface, peerInterface);
+  // A rejected replacement must fail before unloading the working installation.
+  const helperBeforeRejectedInstall = await helperPID();
+  await assert.rejects(
+    privileged(installer, [
+      "install",
+      nativeDirectory,
+      String(process.getuid!()),
+      "0".repeat(64),
+      ...hashes.slice(1),
+    ]),
+    (error: any) => /授权期间程序发生变化/.test(String(error.stderr)),
+  );
+  assert.equal(await helperPID(), helperBeforeRejectedInstall);
+  assert.equal((await native.status()).pid, own.pid);
+  await checkBoth();
+  result.checks.push({
+    scenario: "rejected-replacement",
+    oldHelperPreserved: true,
+    oldKernelPreserved: true,
+    distinctOutlets: true,
+  });
   await native.stop("two-tun-stop-own");
   await wait(
     async () => !(await alive(own.pid!)),
@@ -497,6 +529,39 @@ try {
   await native.close().catch(() => {});
   native = undefined;
   await stopPeer();
+  await privileged(installer, [
+    "install",
+    nativeDirectory,
+    String(process.getuid!()),
+    ...hashes,
+  ]);
+  native = new NativeSession(
+    join(nativeDirectory, "flowgate-bridge"),
+    kernelPath,
+    join(root, "reinstalled"),
+    true,
+  );
+  await native.start();
+  await wait(async () => {
+    const state = await native!.status();
+    return state.systemControl && state.status === "stopped";
+  }, "Reinstalled helper not ready");
+  const reinstalled = await native.apply(compiled, 1, "reinstalled", "tun");
+  assert.equal(reinstalled.status, "running");
+  assert.equal(reinstalled.systemControl, true);
+  const countBeforeReinstallProbe = forwarded;
+  await packet("198.18.0.88");
+  assert.ok(forwarded > countBeforeReinstallProbe);
+  await native.stop("stop-reinstalled");
+  await native.close();
+  native = undefined;
+  assert.deepEqual(await observe(), before);
+  result.checks.push({
+    scenario: "same-version-reinstall",
+    xpcReady: true,
+    actualForwarding: true,
+    settingsRestored: true,
+  });
   result.passed = true;
 } catch (error: any) {
   result.error = String(error.message).slice(0, 1600);
@@ -516,6 +581,8 @@ try {
     try {
       await privileged(installer, ["uninstall"]);
       result.uninstalled = true;
+      await privileged(installer, ["uninstall"]);
+      result.repeatedUninstall = true;
     } catch (error: any) {
       result.cleanupError = String(error.message).slice(0, 1200);
       result.passed = false;

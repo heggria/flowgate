@@ -19,6 +19,21 @@ export function initialConfiguration(): Configuration {
     },
   };
 }
+function validateDNSAddress(value: string, label: string) {
+  try {
+    const url = new URL(value);
+    if (
+      ["https:", "tls:", "udp:"].includes(url.protocol) &&
+      url.hostname &&
+      !url.username &&
+      !url.password
+    )
+      return;
+  } catch {
+    /* Normalize parser failures; do not expose the supplied address. */
+  }
+  throw new Error(`${label}须为 HTTPS、TLS 或 UDP，且包含有效服务器地址`);
+}
 export function validateConfiguration(c: Configuration): void {
   if (
     ![1, 2].includes(c.schema) ||
@@ -60,13 +75,7 @@ export function validateConfiguration(c: Configuration): void {
       !/^[a-zA-Z][a-zA-Z0-9]{0,20}$/.test(network.interface)
     )
       throw new Error("外部网络配置无效");
-    const resolver = new URL(network.dnsServer);
-    if (
-      !["udp:", "tls:", "https:"].includes(resolver.protocol) ||
-      resolver.username ||
-      resolver.password
-    )
-      throw new Error("外部网络 DNS 无效");
+    validateDNSAddress(network.dnsServer, "外部网络 DNS 地址");
     ids.add(network.id);
   }
   const groups = c.groups ?? [];
@@ -131,13 +140,7 @@ export function validateConfiguration(c: Configuration): void {
   )
     throw new Error("请选择有效节点");
   if (!ids.has(c.settings.finalOutbound)) throw new Error("默认出口不存在");
-  const dns = new URL(c.settings.dnsServer);
-  if (
-    !["https:", "tls:", "udp:"].includes(dns.protocol) ||
-    dns.username ||
-    dns.password
-  )
-    throw new Error("DNS 地址须为 HTTPS、TLS 或 UDP");
+  validateDNSAddress(c.settings.dnsServer, "DNS 地址");
   const sourceIds = new Set<string>();
   for (const subscription of c.subscriptions) {
     if (

@@ -1,13 +1,16 @@
 // Independent peer fixture: a real second kernel, with only a dedicated /32 route.
 // Configuration validation is unprivileged; running it is restricted to the CI guard.
-export function independentTUNConfiguration(port: number) {
+export function independentTUNConfiguration(
+  port: number,
+  interfaceName = "utun900",
+) {
   return {
     log: { level: "warn" },
     inbounds: [
       {
         type: "tun",
         tag: "peer-in",
-        interface_name: "utun",
+        interface_name: interfaceName,
         address: ["172.30.0.1/30"],
         auto_route: true,
         strict_route: true,
