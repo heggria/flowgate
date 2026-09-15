@@ -12,7 +12,7 @@ export function safeMessage(value: unknown): string {
     )
     .replace(/(bearer\s+)[\w.\-]+/gi, "$1[已隐藏]")
     .replace(
-      /((?:token|password|secret|authorization|api[_-]?key)\s*[:=]\s*)[^\s,;]+/gi,
+      /(["']?\b(?:(?:access[_-]?|refresh[_-]?)?token|password|secret|authorization|api[_-]?key)["']?\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;]+)/gi,
       "$1[已隐藏]",
     )
     .slice(0, 1600);

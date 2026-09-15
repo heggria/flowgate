@@ -1,6 +1,7 @@
 # FlowGate
 
 Read REQUIREMENTS.md and work/STATE.md. The user approved the full architecture implementation on 2026-09-09. Codex is the confirmed visual reference.
+Read RELEASE_READINESS.md for the user's ongoing consistency, completeness and release-readiness objective. Keep release claims aligned with evidence for the exact candidate build.
 
 ## Boundaries
 

@@ -60,6 +60,32 @@ test("problems survive unrelated success, can be dismissed and remain reviewable
   assert.equal(store.snapshot().length, 30);
 });
 
+test("quoted credential fields stay private in visible and retained problems", () => {
+  const credential = 'private phrase with "quotes" and spaces';
+  const input = JSON.stringify({
+    password: credential,
+    access_token: "opaque-token",
+    api_key: "provider-key",
+    reason: "upstream rejected",
+  });
+  const message = safeMessage(input);
+  for (const value of [
+    "private phrase",
+    "quotes",
+    "opaque-token",
+    "provider-key",
+  ])
+    assert.equal(message.includes(value), false);
+  assert.match(message, /upstream rejected/);
+  const store = createProblemStore();
+  store.report("subscription.import", new Error(input));
+  assert.equal(store.snapshot()[0].message, message);
+  assert.equal(
+    safeMessage("secret='a long private phrase'").includes("private phrase"),
+    false,
+  );
+});
+
 import { createSnapshotProblemObserver } from "../packages/client/src/problems";
 test("persisted background failures remain visible even with a stopped kernel; polling is deduplicated", () => {
   const store = createProblemStore(),
