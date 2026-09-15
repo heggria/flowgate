@@ -1,3 +1,7 @@
+import {
+  initialConfiguration,
+  compileConfiguration,
+} from "../../packages/domain/src/configuration";
 // Independent peer fixture: a real second kernel, with only a dedicated /32 route.
 // Configuration validation is unprivileged; running it is restricted to the CI guard.
 export function independentTUNConfiguration(
@@ -28,4 +32,31 @@ export function independentTUNConfiguration(
     ],
     route: { auto_detect_interface: true, final: "peer-out" },
   };
+}
+
+// Exercise production compilation without adding route or interface overrides.
+export function productionFullTUNConfiguration(httpPort: number) {
+  const configuration = initialConfiguration();
+  configuration.settings.mode = "tun";
+  configuration.settings.selectedNode = "direct";
+  configuration.settings.finalOutbound = "direct";
+  configuration.nodes = [
+    {
+      id: "fixture",
+      name: "Local HTTP proxy",
+      type: "http",
+      server: "127.0.0.1",
+      port: httpPort,
+      options: {},
+    },
+  ];
+  configuration.rules = [
+    {
+      id: "fixture-route",
+      kind: "ip_cidr",
+      value: "198.18.0.88/32",
+      outbound: "fixture",
+    },
+  ];
+  return compileConfiguration(configuration);
 }

@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
-import { independentTUNConfiguration } from "./fixtures/independent-tun";
+import { lookup } from "node:dns/promises";
+import {
+  independentTUNConfiguration,
+  productionFullTUNConfiguration,
+} from "./fixtures/independent-tun";
 import { createServer } from "node:http";
 import { connect, type Socket } from "node:net";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
@@ -86,7 +90,7 @@ const result: any = {
     await readFile(join(nativeDirectory, "build-manifest.json"), "utf8"),
   ).commit,
   scope:
-    "real local installer/XPC/root helper; system proxy and scoped TUN; kernel/helper SIGKILL; independent scoped TUN coexistence on an ephemeral macOS runner",
+    "real local installer/XPC/root helper; system proxy and scoped TUN; kernel/helper SIGKILL; independent scoped TUN coexistence and production full TUN on an ephemeral macOS runner",
   checks: [],
 };
 const sockets = new Set<Socket>();
@@ -562,6 +566,99 @@ try {
     actualForwarding: true,
     settingsRestored: true,
   });
+  // Use production full-TUN output unchanged: no route_address narrowing and
+  // no fixture-only lo0 binding. Default direct keeps this disposable runner's
+  // ordinary traffic usable; only the dedicated target selects the local proxy.
+  const internet = async () => {
+    await exec(
+      "/usr/bin/curl",
+      [
+        "-4",
+        "--silent",
+        "--show-error",
+        "--fail",
+        "--max-time",
+        "20",
+        "--noproxy",
+        "*",
+        "--output",
+        "/dev/null",
+        "https://example.com/",
+      ],
+      { timeout: 22000 },
+    );
+  };
+  result.phase = "full-tun-public-baseline";
+  await internet();
+  await startPeer();
+  const fullCompiled = productionFullTUNConfiguration(
+    (proxy.address() as any).port,
+  );
+  native = new NativeSession(
+    join(nativeDirectory, "flowgate-bridge"),
+    kernelPath,
+    join(root, "production-full-tun"),
+    true,
+  );
+  await native.start();
+  await wait(async () => {
+    const state = await native!.status();
+    return state.systemControl && state.status === "stopped";
+  }, "Full TUN helper not ready");
+  result.phase = "full-tun-start";
+  const fullState = await native.apply(
+    fullCompiled,
+    1,
+    "production-full-tun",
+    "tun",
+  );
+  assert.equal(fullState.status, "running");
+  assert.ok(fullState.tunInterface);
+  assert.ok(fullState.pid);
+  assert.equal(await routeInterface("198.18.0.88"), fullState.tunInterface);
+  result.phase = "full-tun-local-outlets";
+  const fullOwnCount = forwarded,
+    fullPeerCount = peerForwarded;
+  await packet("198.18.0.88");
+  await packet("198.18.0.89");
+  assert.ok(
+    forwarded > fullOwnCount && peerForwarded > fullPeerCount,
+    "Production full TUN and independent peer must use their respective outlets",
+  );
+  assert.notEqual(await routeInterface("198.18.0.89"), fullState.tunInterface);
+  result.phase = "full-tun-public-https";
+  const resolved = await lookup("example.com", { family: 4 });
+  assert.equal(
+    await routeInterface(resolved.address),
+    fullState.tunInterface,
+    "Ordinary IPv4 traffic must actually enter the full TUN",
+  );
+  await internet();
+  result.phase = "full-tun-restoration";
+  await native.stop("stop-production-full-tun");
+  await wait(
+    async () => !(await alive(fullState.pid!)),
+    "Full TUN kernel did not stop",
+  );
+  await packet("198.18.0.89");
+  await native.close();
+  native = undefined;
+  await stopPeer();
+  await wait(
+    async () => JSON.stringify(await observe()) === JSON.stringify(before),
+    "Full TUN network settings did not recover",
+  );
+  await internet();
+  result.checks.push({
+    scenario: "production-full-tun-local-http",
+    unmodifiedCompiledConfiguration: true,
+    actualForwarding: true,
+    distinctOutlets: true,
+    publicIPv4HTTPS: true,
+    peerSurvived: true,
+    settingsRestored: true,
+  });
+  result.phase = "complete";
   result.passed = true;
 } catch (error: any) {
   result.error = String(error.message).slice(0, 1600);
