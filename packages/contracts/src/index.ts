@@ -124,7 +124,10 @@ export interface Configuration {
   rules: Rule[];
   settings: Settings;
 }
+export const RECOVERY_DISCONNECT_OPERATION_ID = "recovery-disconnect";
 export interface Operation {
+  nativeMode?: Settings["mode"];
+  recoveredBy?: string;
   context?: TraceContext;
   id: string;
   traceId: string;
@@ -252,7 +255,16 @@ export interface NativeAppearance {
   reducedTransparency: boolean;
   differentiateWithoutColor: boolean;
 }
+export interface ApplicationUpdateState {
+  phase: "idle" | "checking" | "downloading" | "current" | "ready" | "failed";
+  message: string;
+  configured: boolean;
+  revision: number;
+}
 export interface ShellPort {
+  onApplicationUpdate?: (
+    listener: (value: ApplicationUpdateState) => void,
+  ) => () => void;
   onAppearance?: (listener: (value: NativeAppearance) => void) => () => void;
   setReleaseHandler?: (handler: () => Promise<void>) => () => void;
   prepareRelease?: () => Promise<void>;

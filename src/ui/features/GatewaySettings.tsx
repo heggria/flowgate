@@ -1,3 +1,4 @@
+import { shellRequest } from "../../../packages/client/src/index";
 import { Button, SettingRow, StatusBadge } from "../components";
 import { useEffect, useState } from "react";
 import type { FeatureProps } from "../modules";
@@ -8,7 +9,7 @@ export function GatewaySettings({ run, busy }: FeatureProps) {
     port?: number;
   } | null>(null);
   const refresh = async () =>
-    setStatus((await window.shell.request("gateway.status")) as any);
+    setStatus((await shellRequest("gateway.status")) as any);
   useEffect(() => {
     void refresh().catch(() => {});
   }, []);
@@ -38,7 +39,7 @@ export function GatewaySettings({ run, busy }: FeatureProps) {
             className="secondary"
             onClick={() =>
               run(async () => {
-                await window.shell.request(
+                await shellRequest(
                   status.lifecycle === "ready"
                     ? "gateway.stop"
                     : "gateway.start",

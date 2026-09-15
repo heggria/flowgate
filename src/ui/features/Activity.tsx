@@ -1,3 +1,4 @@
+import { shellRequest } from "../../../packages/client/src/index";
 import {
   Button,
   PageHeader,
@@ -178,9 +179,7 @@ export function Activity({ snapshot, navigate }: FeatureProps) {
             onClick={() =>
               void task.execute(async () => {
                 setEvents(
-                  (await window.shell.request(
-                    "diagnostics.trace",
-                  )) as typeof events,
+                  (await shellRequest("diagnostics.trace")) as typeof events,
                 );
               })
             }

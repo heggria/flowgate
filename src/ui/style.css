@@ -3663,3 +3663,118 @@ button[aria-busy="true"] {
   flex: 0 0 16px;
   margin: 3px 0 0;
 }
+
+/* Recovery lives beside the workspace, never above its page heading. */
+.sidebarproblems {
+  margin-top: auto;
+  padding-top: 16px;
+}
+.sidebarbottom {
+  margin-top: 0;
+}
+.problemnav {
+  width: 100%;
+}
+.problemnav .problembadge {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  border-radius: 5px;
+  padding: 1px 6px;
+  min-width: 20px;
+  text-align: center;
+}
+.problemspage {
+  max-width: 940px;
+}
+.problemfilters {
+  display: flex;
+  gap: 6px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--border);
+}
+.problemcard {
+  padding: 24px 0;
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+.problemheading {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.problemheading > strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+.problemheading > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.problemcard p {
+  margin: 12px 0 8px;
+  color: var(--muted);
+  line-height: 1.65;
+  max-width: 720px;
+}
+.recoverylinks {
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.taskerror .recoverylinks {
+  display: flex;
+  margin-top: 4px;
+}
+.problemcard details {
+  margin-top: 12px;
+}
+.problemcard summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+  padding: 4px 0;
+}
+.problemcard pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 200px;
+  overflow: auto;
+  font: 12px/1.7 monospace;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 12px;
+  border-radius: 6px;
+}
+.problemcard small {
+  display: block;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+}
+.problemtoast {
+  position: fixed;
+  z-index: 80;
+  bottom: 44px;
+  right: 24px;
+  max-width: min(540px, calc(100vw - 48px));
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 6px 24px #00000018;
+  font-size: 13px;
+}
+.problemtoast > svg {
+  color: var(--danger);
+  flex-shrink: 0;
+}
+.problemtoast > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.problemtoast > button {
+  flex-shrink: 0;
+}

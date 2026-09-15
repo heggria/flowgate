@@ -2,14 +2,14 @@
 
 The public source is at https://github.com/heggria/flowgate. Required GitHub checks are `Static checks` and `macOS verification`; main requires a pull request, an up-to-date branch and both passing checks. Force pushes and deletion are disabled, including for administrators.
 
-Apple certificates/notarization and dependent privileged acceptance are **deferred by the user**. Development packaging and independently signed business updates proceed without them. Do not claim Developer ID, notarization, real privileged TUN/helper acceptance or full application auto-update has passed.
+Apple certificates/notarization were previously deferred by the user. The ongoing release-readiness criteria are in [RELEASE_READINESS.md](RELEASE_READINESS.md). Local administrator-approved helper installation does not require Apple certificates; its actual privileged acceptance is a separate gate. Development packaging and independently signed business updates proceed without them. Do not claim Developer ID, notarization, complete privileged TUN/helper acceptance or full application auto-update has passed.
 
 ## Verified development delivery
 
 1. Use the pinned runtime from `.node-version` and `npm ci`, then `node scripts/fetch-kernel.mjs`.
 2. Run `npm run verify` on macOS arm64. Build output separates fixed shell/native files from `dist/release`. The build uses a fresh staging directory, rejects missing/wrong-architecture kernel files, and seals exact hashes plus source provenance in `dist/build-manifest.json`.
-3. `npm run package:mac` verifies that inventory, packages the exact build, records FlowGate's own version/build number and includes license notices. Its default output is a locally runnable ad-hoc development build.
-4. `node tests/package.integration.mjs` starts the packaged executable hidden with isolated data and verifies a real proxy request. CI performs this after its behavioral checks, then uploads ZIP, SHA-256 checksum, source archive and provenance.
+3. `npm run package:mac` verifies that inventory, packages the exact build, records FlowGate's own version/build number and includes license notices. Native distribution signing changes executable bytes: only those native files may change, their original hashes are retained under `signingSource`, and the packaged inventory is resealed before the enclosing app is signed. The complete final inventory is verified again after signing and before archiving. Its default output is a locally runnable ad-hoc development build.
+4. `node tests/package.integration.mjs` starts the packaged executable hidden with isolated data and verifies a real proxy request. CI performs this after its behavioral checks, then uploads ZIP, SHA-256 checksum, source archive and provenance. Archiving requires a clean build and uses its exact commit for the source archive, even if the working checkout has moved. Checksums cover the app ZIP, source archive and provenance. The archive output directory must be new (`FLOWGATE_ARCHIVE_DIR`, default `work/artifacts`); failures remove only that newly created directory.
 5. `Publish verified development build` consumes only a successful **push to this repository's main branch**, never a PR or fork. It publishes immutable `dev-<commit>` prereleases with no stable/latest designation. Existing assets are not overwritten. Failed checks produce no release.
 
 Remote CI results, package checks and release artifacts are distinct evidence. A successful old commit does not validate concurrent uncommitted edits. Local builds record `dirty` status; public CI uses a clean checkout.
@@ -28,7 +28,7 @@ Release manifests declare publisher, platform, component versions, shell/protoco
 
 `FLOWGATE_SIGNING_IDENTITY` selects an installed Developer ID. Production packaging invokes `@electron/osx-sign` for nested Electron resources with hardened runtime/JIT entitlement and preserves the native identifiers `com.flowgate.bridge`, `com.flowgate.helper` and `com.flowgate.kernel` under one team. Optional `FLOWGATE_NOTARY_PROFILE` references credentials already in the local keychain and invokes `@electron/notarize`. No secret is accepted in app UI or committed. This path remains unverified with a real certificate/profile.
 
-After signing, install the app, register/approve its helper and perform the outstanding native/network matrix in [ACCEPTANCE.md](ACCEPTANCE.md). Configure the separate Squirrel.Mac HTTPS application feed for full shell/native/Electron upgrades. Business updates do not replace that channel.
+After signing, install the app, register/approve its helper and perform the outstanding native/network matrix in [ACCEPTANCE.md](ACCEPTANCE.md). Prepare the separately signed ZIP/static directory with `npm run prepare:application-release`; its exact inputs, version rules and remaining signed-install checks are in [APPLICATION_UPDATES.md](APPLICATION_UPDATES.md). Configure the separate Squirrel.Mac HTTPS application feed for full shell/native/Electron upgrades. Business updates do not replace that channel.
 
 Primary references: [TUF JS](https://github.com/theupdateframework/tuf-js), [Electron signing](https://www.electronjs.org/docs/latest/tutorial/code-signing), [osx-sign](https://github.com/electron/osx-sign), [notarize](https://github.com/electron/notarize).
 

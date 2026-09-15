@@ -1,3 +1,4 @@
+import { problems } from "./problems";
 import type {
   AppSnapshot,
   FlowGateClient,
@@ -26,14 +27,27 @@ export async function cancelPending() {
 }
 export const client: FlowGateClient = {
   cancel: (operationId) => window.flowgate.cancel(operationId),
-  async request(method, payload, operationId = crypto.randomUUID()) {
+  async request<T = unknown>(
+    method: string,
+    payload?: unknown,
+    operationId = crypto.randomUUID(),
+  ) {
     const tracked = !["snapshot", "operation.get"].includes(method);
     if (tracked) {
       pending.add(operationId);
       changed();
     }
     try {
-      return await window.flowgate.request(method, payload, operationId);
+      const result = await window.flowgate.request<T>(
+        method,
+        payload,
+        operationId,
+      );
+      problems.resolve(method);
+      return result;
+    } catch (error) {
+      problems.report(method, error);
+      throw error;
     } finally {
       if (tracked) {
         pending.delete(operationId);
@@ -49,4 +63,19 @@ export function mutation(method: string, payload?: unknown) {
     payload,
     crypto.randomUUID(),
   );
+}
+
+export async function shellRequest<T = unknown>(
+  method: Parameters<ShellPort["request"]>[0],
+  payload?: unknown,
+): Promise<T> {
+  const quiet = ["ui.ready", "ui.trace", "ui.context"].includes(method);
+  try {
+    const result = await window.shell.request(method, payload);
+    if (!quiet) problems.resolve(method);
+    return result as T;
+  } catch (error) {
+    if (!quiet) problems.report(method, error);
+    throw error;
+  }
 }

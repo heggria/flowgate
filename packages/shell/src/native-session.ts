@@ -136,9 +136,15 @@ export class NativeSession implements NativePort {
     return this.call("stop", { operationId });
   }
   async close() {
-    if (this.process) {
-      await this.stop(randomUUID());
-      this.process?.stdin.end();
+    const child = this.process;
+    if (child) {
+      try {
+        await this.stop(randomUUID());
+      } finally {
+        // EOF releases the bridge/helper lease even when stop reports that
+        // owned system cleanup still needs recovery. Preserve that error.
+        child.stdin.end();
+      }
     }
   }
 }

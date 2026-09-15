@@ -124,7 +124,10 @@ final class SystemProxyOwner {
             }
         }
         guard !changes.isEmpty else { throw NSError(domain: "没有可设置代理的网络服务", code: 18) }
-        journal.record = RecoveryRecord(phase: "applying", changes: changes, operationId: operationId); try journal.persist()
+        // launch() already recorded the kernel identity. Keep it throughout the
+        // proxy transaction so a helper crash before its final reply can still
+        // be recovered by the independent watchdog's generation check.
+        journal.record = RecoveryRecord(phase: "applying", changes: changes, operationId: operationId, kernelPID: journal.record.kernelPID, kernelBirth: journal.record.kernelBirth); try journal.persist()
         for change in changes { var current = try prefs.read(change.service); let applied = try JSONSerialization.jsonObject(with: change.applied) as! [String: Any]; current.merge(applied) { _, new in new }; try prefs.write(change.service, current) }
         try prefs.commit()
         journal.record.phase = "applied"; try journal.persist()
