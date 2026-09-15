@@ -3,10 +3,12 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile, readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { resolve, join, dirname } from "node:path";
 import { isolateProxyPort } from "./proxy-fixture.mjs";
 import { verifyArtifacts } from "../scripts/artifacts.mjs";
+import { explainCoordinatedRestart } from "./fixtures/soak-observation.ts";
 
 const seconds = Number(process.env.FLOWGATE_SOAK_SECONDS ?? 1800);
 assert.ok(
@@ -44,16 +46,35 @@ const result = {
   at: new Date().toISOString(),
   commit: build.commit,
   dirty: build.dirty,
+  buildNumber: (
+    await exec("/usr/libexec/PlistBuddy", [
+      "-c",
+      "Print :CFBundleVersion",
+      join(bundle, "Contents/Info.plist"),
+    ])
+  ).stdout.trim(),
+  harnessSHA256: createHash("sha256")
+    .update(await readFile(new URL(import.meta.url)))
+    .update(
+      await readFile(
+        new URL("./fixtures/soak-observation.ts", import.meta.url),
+      ),
+    )
+    .digest("hex"),
   requestedSeconds: seconds,
   scope:
     "isolated manual-mode loopback forwarding, stop/start, renderer reload and process liveness; no real sleep or privileged acceptance",
   samples: [],
   cycles: 0,
   reloads: 0,
+  coordinatedRestarts: [],
 };
 let app,
   page,
   currentPID,
+  previousState,
+  lastObservedState,
+  started,
   interrupted = false;
 const interrupt = () => {
   interrupted = true;
@@ -95,33 +116,9 @@ try {
   assert.equal(initial.configuration.settings.mode, "manual");
   assert.equal(initial.kernel.systemControl, false);
   currentPID = initial.kernel.pid;
-  const started = Date.now();
-  while (Date.now() - started < seconds * 1000 && !interrupted) {
-    const round = result.samples.length;
-    assert.equal(
-      await app.evaluate(({ BrowserWindow }) =>
-        BrowserWindow.getAllWindows().some(
-          (w) => w.isVisible() || w.isFocused() || w.isFocusable(),
-        ),
-      ),
-      false,
-    );
-    if (round > 0 && round % 6 === 0) {
-      const oldPID = currentPID;
-      await command("proxy.disconnect");
-      assert.equal((await snapshot()).kernel.status, "stopped");
-      assert.equal(alive(oldPID), false, "Stopped kernel must not survive");
-      await command("proxy.connect");
-      currentPID = (await snapshot()).kernel.pid;
-      result.cycles++;
-    }
-    if (round > 0 && round % 12 === 0) {
-      await page.reload();
-      await page
-        .getByRole("heading", { name: "概览", exact: true })
-        .waitFor({ timeout: 30000 });
-      result.reloads++;
-    }
+  previousState = initial;
+  lastObservedState = initial;
+  const probe = async () => {
     const responses = await Promise.all(
       ["http", "socks5h"].map((type) =>
         exec(
@@ -144,24 +141,63 @@ try {
     );
     for (const response of responses)
       assert.equal(response.stdout, "flowgate-soak-origin");
+    return responses.length;
+  };
+  started = Date.now();
+  while (Date.now() - started < seconds * 1000 && !interrupted) {
+    const round = result.samples.length;
+    assert.equal(
+      await app.evaluate(({ BrowserWindow }) =>
+        BrowserWindow.getAllWindows().some(
+          (w) => w.isVisible() || w.isFocused() || w.isFocusable(),
+        ),
+      ),
+      false,
+    );
+    if (round > 0 && round % 6 === 0) {
+      const oldPID = currentPID;
+      await command("proxy.disconnect");
+      assert.equal((await snapshot()).kernel.status, "stopped");
+      assert.equal(alive(oldPID), false, "Stopped kernel must not survive");
+      await command("proxy.connect");
+      previousState = await snapshot();
+      currentPID = previousState.kernel.pid;
+      result.cycles++;
+    }
+    if (round > 0 && round % 12 === 0) {
+      await page.reload();
+      await page
+        .getByRole("heading", { name: "概览", exact: true })
+        .waitFor({ timeout: 30000 });
+      result.reloads++;
+    }
+    let requests = await probe();
     const state = await snapshot();
+    lastObservedState = state;
     assert.equal(
       state.epoch,
       initial.epoch,
       "Service must not restart unexpectedly",
     );
     assert.equal(state.kernel.status, "running");
-    assert.equal(
-      state.kernel.pid,
-      currentPID,
-      "Kernel changed without an explicit restart",
-    );
+    if (state.kernel.pid !== currentPID) {
+      const replacement = explainCoordinatedRestart(
+        previousState,
+        state,
+        alive(currentPID),
+      );
+      // An explained restart must also forward through the replacement kernel.
+      requests += await probe();
+      result.coordinatedRestarts.push(replacement);
+      currentPID = state.kernel.pid;
+    }
     assert.equal(
       state.operations.some(
         (o) => o.state === "unknown" || o.state === "pending",
       ),
       false,
     );
+    previousState = state;
     const memoryKiB = await app.evaluate(({ app }) =>
       app
         .getAppMetrics()
@@ -174,7 +210,7 @@ try {
     );
     result.samples.push({
       seconds: elapsed,
-      requests: responses.length,
+      requests,
       memoryKiB,
     });
     await writeFile(
@@ -186,6 +222,7 @@ try {
           samples: result.samples.length,
           cycles: result.cycles,
           reloads: result.reloads,
+          coordinatedRestarts: result.coordinatedRestarts.length,
           memoryKiB,
         },
         null,
@@ -211,12 +248,40 @@ try {
   assert.equal(alive(currentPID), false, "Stopped test kernel is still alive");
   assert.equal((await snapshot()).kernel.status, "stopped");
   result.requests = served;
-  assert.equal(served, result.samples.length * 2);
+  assert.equal(
+    served,
+    result.samples.reduce((sum, sample) => sum + sample.requests, 0),
+  );
   result.passed = true;
 } catch (error) {
   result.passed = false;
   result.error = String(error.message).slice(0, 1600);
+  if (lastObservedState)
+    result.lastObservation = {
+      epoch: lastObservedState.epoch,
+      revision: lastObservedState.configuration.revision,
+      kernel: {
+        pid: lastObservedState.kernel.pid,
+        status: lastObservedState.kernel.status,
+        operationId: lastObservedState.kernel.operationId,
+        appliedRevision: lastObservedState.kernel.appliedRevision,
+      },
+      operations: lastObservedState.operations
+        .slice(0, 10)
+        .map(({ id, kind, state, revision, startedAt, completedAt }) => ({
+          id,
+          kind,
+          state,
+          revision,
+          startedAt,
+          completedAt,
+        })),
+    };
 } finally {
+  if (started)
+    result.elapsedSeconds = Math.round((Date.now() - started) / 1000);
+  result.finishedAt = new Date().toISOString();
+  result.requests = served;
   try {
     if (page)
       await page.evaluate(() =>

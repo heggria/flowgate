@@ -61,7 +61,15 @@ helper 强杀后，在恢复断言之前没有重新调用 helper，避免用重
 
 另新增独立 Swift SCPreferences 写入器，在临时 CI 机器上修改有效 HTTP 代理，再检查正常停止/helper 崩溃能否保留第三方 HTTP 设置、恢复自己仍拥有的 HTTPS/SOCKS，并由 URLSession 实际访问第三方出口。这两项在 `46e0ae5` 的 [push 检查](https://github.com/heggria/flowgate/actions/runs/34937776955) 与 [PR 检查](https://github.com/heggria/flowgate/actions/runs/34937778466) 均通过，包含此前场景共 14 项真实特权验收。分支精确提交的证据为 `work/readiness/ci46-privileged-result.json`；PR 构建使用 GitHub 合并提交 `4b9e8cf`，另存 `ci46-pr-privileged-result.json`。最后卸载、安装文件移除和网络设置恢复通过。
 
-另准备了 Service 自动协调场景：同一受保护 CI 入口直接组合生产 Service、原生会话和真实系统检查器。第三方改写后等待正常轮询自行停止本应用，并核对持久化成功操作、第三方设置和实际转发。未新增桌面权限开关；类型检查、7 项相关单元测试和本机拒绝执行守卫通过，远程实际结果尚未产生。该场景只覆盖自动让出系统代理，不能代表所有网络变化策略。
+另准备了 Service 自动协调场景：同一受保护 CI 入口直接组合生产 Service、原生会话和真实系统检查器。第三方改写后等待正常轮询自行停止本应用，并核对持久化成功操作、第三方设置和实际转发。未新增桌面权限开关；`8183df1` 的 [push 检查](https://github.com/heggria/flowgate/actions/runs/34938551983) 与 [PR 检查](https://github.com/heggria/flowgate/actions/runs/34938554187) 完整通过，共 15 个真实特权场景；自动轮询断开、第三方 HTTP 保留及转发、自己拥有的 HTTPS/SOCKS 恢复均通过。分支精确结果为 `work/readiness/ci818-privileged-result.json`；PR 合并提交 `1b054600` 的结果单独保存。该场景只覆盖自动让出系统代理，不能代表所有网络变化策略。
+
+## 最新候选包与长测发现
+
+实际 CI818 开发包（构建 95）已下载，三项校验和、源码归档提交、应用清单及签名一致性核对通过；本机隐藏启动与真实代理转发也通过。证据为 `work/readiness/ci818-archive-check.json`、`ci818-local-package-result.json`，下载前后原用户数据及系统网络不变。它仍是 ad-hoc 开发候选，不是正式签名发行版。
+
+原 CI74 八小时测试已失败退出：1359 个成功样本、226 次启停、113 次重载，最后成功样本为 13675 秒。失败时内核 PID 改变；持久化记录显示成功的 `network-*` 重连，旧用例仅允许主动启停导致 PID 变化，因此拒绝了这次协调重建。触发重连的具体网络差异未被记录，不能推断所有自动重连都正确，也不能把该次测试改判通过。失败原件与分析保留在 `work/readiness/ci74-soak-8h-result.json`、`ci74-soak-failure-analysis.json`。
+
+长测工具现在仅接受新的、与当前内核 operationId 精确匹配的成功网络重连；配置修订须一致、旧进程须退出、Service 代次须保持，并对替换内核再次进行真实 HTTP/SOCKS 请求。没有操作记录、旧操作重用、失败/未完成操作、错误修订或旧进程残留仍判失败。报告单列协调重建与观测变化字段，并记录包构建号和测试工具摘要。相关判定测试与 20 秒真实包运行通过；这不代表新的八小时或真实切网验收已完成。
 
 ## 仍未完成
 
