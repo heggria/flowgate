@@ -963,6 +963,28 @@ try {
 } catch (error: any) {
   result.error = String(error.message).slice(0, 1600);
   result.passed = false;
+  if (service) {
+    // Capture coordinator evidence before cleanup; this never reconnects XPC
+    // during the independent helper-crash scenarios, where service is absent.
+    result.serviceFailure = {
+      observedFixtureRoute: hasFixtureRoute(service.network?.routes ?? []),
+      routeCount: service.network?.routes.length,
+      warnings: service.network?.warnings,
+      savedRevision: service.store.configuration.revision,
+      appliedRevision: service.store.appliedConnection?.revision,
+      savedMode: service.store.configuration.settings.mode,
+      appliedMode: service.store.appliedConnection?.mode,
+      operations: service.store.operations
+        .slice(-8)
+        .map(({ id, kind, state, revision, nativeMode }) => ({
+          id,
+          kind,
+          state,
+          revision,
+          nativeMode,
+        })),
+    };
+  }
 } finally {
   try {
     await service?.stop();
