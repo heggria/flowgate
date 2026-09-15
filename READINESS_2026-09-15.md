@@ -2,7 +2,7 @@
 
 ## 当前证据与结论
 
-候选代码 `6f04012c61b91b57c6621bafb6d65ff69d0ceb48` 已通过 [精确提交的远程检查](https://github.com/heggria/flowgate/actions/runs/34931766531)，包括 103 项单元测试、完整协议/更新/故障/UI 回归、后台不抢焦点、安装包转发和归档。[草稿 PR #12](https://github.com/heggria/flowgate/pull/12) 尚未合并或用于正式发布。
+此前候选代码 `6f04012c61b91b57c6621bafb6d65ff69d0ceb48` 已通过 [精确提交的远程检查](https://github.com/heggria/flowgate/actions/runs/34931766531)，包括 103 项单元测试、完整协议/更新/故障/UI 回归、后台不抢焦点、安装包转发和归档。[草稿 PR #12](https://github.com/heggria/flowgate/pull/12) 尚未合并或用于正式发布。
 
 本轮修复了正式签名后文件清单失效、源码归档与实际构建提交不一致、带引号的凭据未脱敏，以及停止失败后关闭流程没有释放桥接管道的问题。签名后清单仅允许指定原生程序改变，保留签名前哈希；归档绑定精确的干净源码提交，并校验应用包、源码和来源说明三个文件。
 
@@ -43,11 +43,17 @@ helper 强杀后，在恢复断言之前没有重新调用 helper，避免用重
 
 ## 后续远程发现与验收扩展
 
-`4a1c560` 的 push 检查通过完整行为、界面与安装包验证，真实系统代理/定向 TUN 六项也通过；新增独立 TUN 因测试接口名仅为 `utun` 而在启动时被内核拒绝。退出时卸载成功，网络设置一致。已改为按实际接口列表选择空闲 `utunN`，其实际共存结果仍待新提交的 CI，不能由六项基线外推。
+`4a1c560` 的 push 检查通过完整行为、界面与安装包验证，真实系统代理/定向 TUN 六项也通过；新增独立 TUN 因测试接口名仅为 `utun` 而在启动时被内核拒绝。退出时卸载成功，网络设置一致。已改为按实际接口列表选择空闲 `utunN`，随后 `74d88ab` 的实际共存结果通过，具体范围如下。
 
 同一提交的 PR 检查在草稿测试遇到顶部通知与表单错误同时存在，原全局 alert 定位不唯一。测试改为定位 DNS 表单的具体错误；同时修复 DNS 无效输入显示底层英文错误、无主机地址的 `udp://`/`tls://` 可通过保存校验的问题。107 项单元测试、草稿端到端与真实 DNS 转发专项通过；失败输入仍保留草稿。
 
-隔离安装矩阵新增校验失败的替换不卸载正在工作的旧服务、同版本重装后的 XPC/真实转发，以及重复卸载。这些新特权用例尚待远程执行。记录位于 `work/readiness/ci4a1-*-failed.log`、`dns-*.log` 与 `installer-matrix-typecheck.log`。
+隔离安装矩阵新增校验失败的替换不卸载正在工作的旧服务、同版本重装后的 XPC/真实转发，以及重复卸载。这些新特权用例已在 `74d88ab` 的实际 CI 中通过。记录位于 `work/readiness/ci4a1-*-failed.log`、`dns-*.log` 与 `installer-matrix-typecheck.log`。
+
+## 最新完整检查与发布工具准备
+
+`74d88ab23af4f5507997a0ac7d3e889b32651886` 的 [push 检查](https://github.com/heggria/flowgate/actions/runs/34934928108) 和 [PR 检查](https://github.com/heggria/flowgate/actions/runs/34934930985) 均通过。107 项单元测试、完整行为/UI/安装包与归档检查通过；实际 root 流程的六项基线、三个双 TUN 场景、替换校验失败保留旧服务、同版本重装共 11 项通过，重复卸载后安装文件移除，系统代理/DNS/默认路由与之前一致。两个 TUN 使用独立内核、专用路由和各自受限的 HTTP 出口；这仍不是全局 TUN 与任意 VPN 的完整验收。日志提取结果为 `work/readiness/ci74-privileged-result.json`。
+
+新增 `prepare:application-release` 在完整签名、同团队原生组件、公证票据、Gatekeeper、清单和版本递增检查之后准备 ZIP、静态更新目录、源码和校验和，不上传文件。真实开发包被按预期拒绝，正式签名成功路径仍未验证。用唯一标识的隔离 Electron 副本运行实际 Squirrel 解析器，生成的同版本目录、损坏 JSON、缺下载地址、下一次检查恢复均通过；未下载或安装任何更新。详见 [APPLICATION_UPDATES.md](APPLICATION_UPDATES.md)。发布工具与新增解析测试还需要后续提交的远程检查。
 
 ## 仍未完成
 

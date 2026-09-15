@@ -28,7 +28,7 @@ Release manifests declare publisher, platform, component versions, shell/protoco
 
 `FLOWGATE_SIGNING_IDENTITY` selects an installed Developer ID. Production packaging invokes `@electron/osx-sign` for nested Electron resources with hardened runtime/JIT entitlement and preserves the native identifiers `com.flowgate.bridge`, `com.flowgate.helper` and `com.flowgate.kernel` under one team. Optional `FLOWGATE_NOTARY_PROFILE` references credentials already in the local keychain and invokes `@electron/notarize`. No secret is accepted in app UI or committed. This path remains unverified with a real certificate/profile.
 
-After signing, install the app, register/approve its helper and perform the outstanding native/network matrix in [ACCEPTANCE.md](ACCEPTANCE.md). Configure the separate Squirrel.Mac HTTPS application feed for full shell/native/Electron upgrades. Business updates do not replace that channel.
+After signing, install the app, register/approve its helper and perform the outstanding native/network matrix in [ACCEPTANCE.md](ACCEPTANCE.md). Prepare the separately signed ZIP/static directory with `npm run prepare:application-release`; its exact inputs, version rules and remaining signed-install checks are in [APPLICATION_UPDATES.md](APPLICATION_UPDATES.md). Configure the separate Squirrel.Mac HTTPS application feed for full shell/native/Electron upgrades. Business updates do not replace that channel.
 
 Primary references: [TUF JS](https://github.com/theupdateframework/tuf-js), [Electron signing](https://www.electronjs.org/docs/latest/tutorial/code-signing), [osx-sign](https://github.com/electron/osx-sign), [notarize](https://github.com/electron/notarize).
 
