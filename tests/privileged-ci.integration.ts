@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
+import { independentTUNConfiguration } from "./fixtures/independent-tun";
 import { createServer } from "node:http";
 import { connect, type Socket } from "node:net";
-import { execFile } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdir, readFile, writeFile, access } from "node:fs/promises";
 import { createHash } from "node:crypto";
@@ -85,11 +86,12 @@ const result: any = {
     await readFile(join(nativeDirectory, "build-manifest.json"), "utf8"),
   ).commit,
   scope:
-    "real local installer/XPC/root helper; system proxy and scoped TUN; kernel/helper SIGKILL on an ephemeral macOS runner",
+    "real local installer/XPC/root helper; system proxy and scoped TUN; kernel/helper SIGKILL; independent scoped TUN coexistence on an ephemeral macOS runner",
   checks: [],
 };
 const sockets = new Set<Socket>();
 let forwarded = 0;
+let peerForwarded = 0;
 const origin = createServer((_req, response) =>
   response.end("flowgate-privileged-origin"),
 );
@@ -117,6 +119,29 @@ proxy.on("connect", (request, socket, head) => {
   socket.on("close", () => remote.destroy());
 });
 await new Promise<void>((r) => proxy.listen(0, "127.0.0.1", r));
+// A separate endpoint rejects FlowGate's target, so success proves path selection.
+const peerProxy = createServer();
+peerProxy.on("connect", (request, socket, head) => {
+  if (request.url !== `198.18.0.89:${originPort}`) {
+    socket.end("HTTP/1.1 403 Forbidden\r\n\r\n");
+    return;
+  }
+  peerForwarded++;
+  const remote = connect(originPort, "127.0.0.1", () => {
+    socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+    if (head.length) remote.write(head);
+    socket.pipe(remote);
+    remote.pipe(socket);
+  });
+  for (const stream of [socket as Socket, remote]) {
+    sockets.add(stream);
+    stream.on("close", () => sockets.delete(stream));
+  }
+  socket.on("error", () => remote.destroy());
+  remote.on("error", () => socket.destroy());
+  socket.on("close", () => remote.destroy());
+});
+await new Promise<void>((r) => peerProxy.listen(0, "127.0.0.1", r));
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function wait(check: () => Promise<boolean>, label: string) {
   const deadline = Date.now() + 18000;
@@ -143,6 +168,79 @@ async function helperPID() {
   const match = stdout.match(/\bpid = (\d+)/);
   assert.ok(match, "Installed helper must be running");
   return Number(match[1]);
+}
+const peerConfiguration = join(root, "independent-peer.json");
+const kernelPath = join(nativeDirectory, "sing-box");
+let peer: ChildProcess | undefined;
+let peerLog = "";
+async function peerPID() {
+  const { stdout } = await exec("/bin/ps", ["-axo", "pid=,command="]);
+  const expected = `${kernelPath} run -c ${peerConfiguration}`;
+  const matches = stdout
+    .split("\n")
+    .map((line) => line.trim().match(/^(\d+)\s+(.+)$/))
+    .filter((match) => match?.[2] === expected);
+  assert.ok(matches.length <= 1, "Only one owned peer kernel may exist");
+  return matches[0] ? Number(matches[0][1]) : undefined;
+}
+async function stopPeer() {
+  // Resolve identity immediately before signalling; never use a stale saved PID.
+  const pid = await peerPID();
+  if (pid) await privileged("/bin/kill", ["-TERM", String(pid)]);
+  await wait(async () => !(await peerPID()), "Independent peer did not exit");
+  if (peer && peer.exitCode === null && peer.signalCode === null)
+    await wait(
+      async () => peer!.exitCode !== null || peer!.signalCode !== null,
+      "Peer supervisor did not exit",
+    );
+  peer = undefined;
+}
+async function packet(address: string) {
+  const { stdout } = await exec(
+    "/usr/bin/curl",
+    [
+      "--silent",
+      "--show-error",
+      "--fail",
+      "--max-time",
+      "8",
+      "--noproxy",
+      "*",
+      `http://${address}:${originPort}/`,
+    ],
+    { timeout: 10000 },
+  );
+  assert.equal(stdout, "flowgate-privileged-origin");
+}
+async function routeInterface(address: string) {
+  const { stdout } = await exec("/sbin/route", ["-n", "get", address]);
+  return stdout.match(/interface: (\S+)/)?.[1];
+}
+async function startPeer() {
+  assert.equal(await peerPID(), undefined);
+  peer = spawn(
+    "/usr/bin/sudo",
+    ["-n", kernelPath, "run", "-c", peerConfiguration],
+    { stdio: ["ignore", "pipe", "pipe"] },
+  );
+  let launchError: Error | undefined;
+  peer.on("error", (error) => {
+    launchError = error;
+  });
+  for (const stream of [peer.stdout, peer.stderr])
+    stream?.on("data", (data) => {
+      peerLog = (peerLog + data.toString()).slice(-64000);
+    });
+  await wait(async () => {
+    if (launchError) throw launchError;
+    if (peer!.exitCode !== null || peer!.signalCode !== null)
+      throw Error(
+        "Independent peer exited before readiness: " + peerLog.slice(-1200),
+      );
+    if (!(await peerPID())) return false;
+    return (await routeInterface("198.18.0.89"))?.startsWith("utun") ?? false;
+  }, "Independent peer TUN did not become ready");
+  await packet("198.18.0.89");
 }
 let native: NativeSession | undefined;
 let attemptedInstallation = false;
@@ -269,6 +367,136 @@ try {
       native = undefined;
       await pause(300);
     }
+  // Coexistence at the native/helper boundary, not a simulated observation and
+  // not an assertion about the Service's full VPN-change coordination policy.
+  await writeFile(
+    peerConfiguration,
+    JSON.stringify(
+      independentTUNConfiguration((peerProxy.address() as any).port),
+    ),
+  );
+  await exec(kernelPath, ["check", "-c", peerConfiguration]);
+  await startPeer();
+  const peerInterface = await routeInterface("198.18.0.89");
+  native = new NativeSession(
+    join(nativeDirectory, "flowgate-bridge"),
+    kernelPath,
+    join(root, "two-tun"),
+    true,
+  );
+  await native.start();
+  await wait(async () => {
+    const state = await native!.status();
+    return state.systemControl && state.status === "stopped";
+  }, "Coexisting helper not ready");
+  const configuration = initialConfiguration();
+  configuration.settings.mode = "tun";
+  configuration.nodes = [
+    {
+      id: "fixture",
+      name: "FlowGate outlet",
+      type: "http",
+      server: "127.0.0.1",
+      port: (proxy.address() as any).port,
+      options: {},
+    },
+  ];
+  configuration.settings.selectedNode = "fixture";
+  const compiled: any = compileConfiguration(configuration);
+  compiled.inbounds[0].route_address = ["198.18.0.88/32"];
+  compiled.outbounds.find(
+    (entry: any) => entry.tag === "fixture",
+  ).bind_interface = "lo0";
+  let generation = 0;
+  const startFlowGate = async () => {
+    const state = await native!.apply(
+      compiled,
+      ++generation,
+      `two-tun-${generation}`,
+      "tun",
+    );
+    assert.equal(state.status, "running");
+    assert.equal(state.systemControl, true);
+    assert.ok(state.pid);
+    assert.ok(state.tunInterface);
+    return state;
+  };
+  const checkBoth = async () => {
+    const ownCount = forwarded,
+      peerCount = peerForwarded;
+    await packet("198.18.0.88");
+    await packet("198.18.0.89");
+    assert.ok(
+      forwarded > ownCount && peerForwarded > peerCount,
+      "Each target must reach its distinct controlled outlet",
+    );
+    assert.notEqual(
+      await routeInterface("198.18.0.88"),
+      await routeInterface("198.18.0.89"),
+    );
+    assert.deepEqual(
+      await observe(),
+      before,
+      "Scoped peers must preserve default route/proxy/DNS",
+    );
+  };
+  let own = await startFlowGate();
+  await checkBoth();
+  assert.notEqual(own.tunInterface, peerInterface);
+  await native.stop("two-tun-stop-own");
+  await wait(
+    async () => !(await alive(own.pid!)),
+    "FlowGate kernel did not stop",
+  );
+  assert.notEqual(
+    await routeInterface("198.18.0.88"),
+    own.tunInterface,
+    "Stopped FlowGate route must disappear",
+  );
+  await packet("198.18.0.89");
+  assert.equal(await routeInterface("198.18.0.89"), peerInterface);
+  result.checks.push({
+    scenario: "two-tun-own-stop",
+    distinctOutlets: true,
+    peerSurvived: true,
+  });
+  own = await startFlowGate();
+  await checkBoth();
+  await stopPeer();
+  assert.notEqual(
+    await routeInterface("198.18.0.89"),
+    peerInterface,
+    "Stopped peer route must disappear",
+  );
+  await packet("198.18.0.88");
+  assert.equal((await native.status()).pid, own.pid);
+  await startPeer();
+  await checkBoth();
+  result.checks.push({
+    scenario: "two-tun-peer-restart",
+    distinctOutlets: true,
+    ownSurvived: true,
+  });
+  await privileged("/bin/kill", ["-KILL", String(await helperPID())]);
+  // Observe independent recovery before issuing any new XPC request.
+  await wait(
+    async () => !(await alive(own.pid!)),
+    "Helper crash left its kernel alive",
+  );
+  await packet("198.18.0.89");
+  assert.ok(
+    await peerPID(),
+    "FlowGate recovery must not kill the independent peer",
+  );
+  assert.deepEqual(await observe(), before);
+  result.checks.push({
+    scenario: "two-tun-helper-crash",
+    ownExited: true,
+    peerSurvived: true,
+  });
+  await native.close().catch(() => {});
+  native = undefined;
+  await stopPeer();
   result.passed = true;
 } catch (error: any) {
   result.error = String(error.message).slice(0, 1600);
@@ -277,6 +505,13 @@ try {
   try {
     await native?.close();
   } catch {}
+  try {
+    await stopPeer();
+  } catch (error: any) {
+    result.peerCleanupError = String(error.message);
+    result.passed = false;
+  }
+  await writeFile(join(root, "independent-peer.log"), peerLog);
   if (attemptedInstallation) {
     try {
       await privileged(installer, ["uninstall"]);
@@ -287,9 +522,11 @@ try {
     }
   }
   for (const socket of sockets) socket.destroy();
+  peerProxy.closeAllConnections();
   proxy.closeAllConnections();
   origin.closeAllConnections();
   await Promise.all([
+    new Promise((r) => peerProxy.close(r)),
     new Promise((r) => proxy.close(r)),
     new Promise((r) => origin.close(r)),
   ]);

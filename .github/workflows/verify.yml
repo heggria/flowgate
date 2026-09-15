@@ -88,5 +88,6 @@ jobs:
             work/*.png
             work/traces/*
             work/diagnostics/*
+            work/privileged-ci/*.log
           if-no-files-found: ignore
           retention-days: 14

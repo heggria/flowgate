@@ -284,7 +284,9 @@ export async function createUISurface() {
      request,
      onApplicationUpdate(listener) {
        fixture.applicationListener = listener;
-       return () => { fixture.applicationListener = undefined; };
+       return () => {
+         fixture.applicationListener = undefined;
+       };
      },
      onNavigate() {
        return () => {};
