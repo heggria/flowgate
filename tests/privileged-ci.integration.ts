@@ -4,7 +4,7 @@ import {
   independentTUNConfiguration,
   productionFullTUNConfiguration,
 } from "./fixtures/independent-tun";
-import { createServer } from "node:http";
+import { createServer, request as httpRequest } from "node:http";
 import { connect, type Socket } from "node:net";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
@@ -90,7 +90,7 @@ const result: any = {
     await readFile(join(nativeDirectory, "build-manifest.json"), "utf8"),
   ).commit,
   scope:
-    "real local installer/XPC/root helper; system proxy and scoped TUN; kernel/helper SIGKILL; independent scoped TUN coexistence and production full TUN on an ephemeral macOS runner",
+    "real local installer/XPC/root helper; system proxy and scoped TUN; kernel/helper SIGKILL; independent scoped TUN coexistence production full TUN and foreign system proxy mutation on an ephemeral macOS runner",
   checks: [],
 };
 const sockets = new Set<Socket>();
@@ -124,7 +124,30 @@ proxy.on("connect", (request, socket, head) => {
 });
 await new Promise<void>((r) => proxy.listen(0, "127.0.0.1", r));
 // A separate endpoint rejects FlowGate's target, so success proves path selection.
-const peerProxy = createServer();
+const peerProxy = createServer((request, response) => {
+  if (
+    request.method !== "GET" ||
+    request.url !== `http://198.18.0.89:${originPort}/`
+  ) {
+    response.writeHead(403);
+    response.end();
+    return;
+  }
+  peerForwarded++;
+  const upstream = httpRequest(
+    { hostname: "127.0.0.1", port: originPort, path: "/", method: "GET" },
+    (remote) => {
+      response.writeHead(remote.statusCode ?? 502, remote.headers);
+      remote.pipe(response);
+    },
+  );
+  upstream.on("error", () => {
+    if (!response.headersSent) response.writeHead(502);
+    response.end();
+  });
+  response.on("close", () => upstream.destroy());
+  upstream.end();
+});
 peerProxy.on("connect", (request, socket, head) => {
   if (request.url !== `198.18.0.89:${originPort}`) {
     socket.end("HTTP/1.1 403 Forbidden\r\n\r\n");
@@ -266,12 +289,30 @@ async function startPeer() {
 }
 let native: NativeSession | undefined;
 let attemptedInstallation = false;
+let foreignSettingsActive = false;
+const foreignSnapshot = join(root, "foreign-proxies.plist");
+const foreignWriter = (mode: string, port?: number) =>
+  privileged("/usr/bin/env", [
+    "FLOWGATE_PRIVILEGED_CI=1",
+    "GITHUB_ACTIONS=true",
+    "RUNNER_ENVIRONMENT=github-hosted",
+    join(root, "foreign-proxy-writer"),
+    mode,
+    foreignSnapshot,
+    ...(port ? [String(port)] : []),
+  ]);
 try {
   await exec("/usr/bin/swiftc", [
     "-parse-as-library",
     "tests/SystemHTTPProbe.swift",
     "-o",
     join(root, "http-probe"),
+  ]);
+  await exec("/usr/bin/swiftc", [
+    "-parse-as-library",
+    "tests/ForeignProxyWriter.swift",
+    "-o",
+    join(root, "foreign-proxy-writer"),
   ]);
   const hashes = await Promise.all(
     ["flowgate-bridge", "flowgate-helper", "sing-box"].map(async (name) =>
@@ -566,6 +607,94 @@ try {
     actualForwarding: true,
     settingsRestored: true,
   });
+  for (const fault of ["none", "helper"] as const) {
+    result.phase = `foreign-proxy-${fault}`;
+    await foreignWriter("capture");
+    foreignSettingsActive = true;
+    native = new NativeSession(
+      join(nativeDirectory, "flowgate-bridge"),
+      kernelPath,
+      join(root, `foreign-proxy-${fault}`),
+      true,
+    );
+    await native.start();
+    await wait(async () => {
+      const state = await native!.status();
+      return state.systemControl && state.status === "stopped";
+    }, "Foreign proxy scenario helper not ready");
+    const ownConfiguration = initialConfiguration();
+    ownConfiguration.settings.mode = "system";
+    ownConfiguration.settings.selectedNode = "fixture";
+    ownConfiguration.nodes = [
+      {
+        id: "fixture",
+        name: "Own outlet",
+        type: "http",
+        server: "127.0.0.1",
+        port: (proxy.address() as any).port,
+        options: {},
+      },
+    ];
+    const ownState = await native.apply(
+      compileConfiguration(ownConfiguration),
+      1,
+      `foreign-${fault}`,
+      "system",
+    );
+    assert.equal(ownState.status, "running");
+    assert.ok(ownState.pid);
+    await exec(
+      join(root, "http-probe"),
+      [`http://198.18.0.88:${originPort}/`],
+      { timeout: 20000 },
+    );
+    const foreignPort = (peerProxy.address() as any).port;
+    await foreignWriter("takeover", foreignPort);
+    await wait(
+      async () => (await observe()).proxy.includes(`HTTPPort : ${foreignPort}`),
+      "Independent HTTP proxy did not become effective",
+    );
+    if (fault === "none") await native.stop("stop-foreign-proxy");
+    else await privileged("/bin/kill", ["-KILL", String(await helperPID())]);
+    // No XPC call before checking the independent watchdog's outcome.
+    await wait(async () => {
+      if (await alive(ownState.pid!)) return false;
+      try {
+        await foreignWriter("verify", foreignPort);
+        return true;
+      } catch {
+        return false;
+      }
+    }, "Recovery did not preserve foreign HTTP and restore only owned groups");
+    const requestsBefore = peerForwarded;
+    await exec(
+      join(root, "http-probe"),
+      [`http://198.18.0.89:${originPort}/`],
+      { timeout: 20000 },
+    );
+    assert.ok(
+      peerForwarded > requestsBefore,
+      "macOS must still use the independent HTTP proxy",
+    );
+    await native.close().catch((error) => {
+      if (fault === "none") throw error;
+    });
+    native = undefined;
+    await foreignWriter("restore");
+    foreignSettingsActive = false;
+    await wait(
+      async () => JSON.stringify(await observe()) === JSON.stringify(before),
+      "Foreign fixture cleanup failed",
+    );
+    result.checks.push({
+      scenario: `foreign-system-proxy-${fault}`,
+      actualForwarding: true,
+      foreignHTTPPreserved: true,
+      ownedHTTPSAndSOCKSRestored: true,
+      kernelExited: true,
+      settingsRestored: true,
+    });
+  }
   // Use production full-TUN output unchanged: no route_address narrowing and
   // no fixture-only lo0 binding. Default direct keeps this disposable runner's
   // ordinary traffic usable; only the dedicated target selects the local proxy.
@@ -682,6 +811,15 @@ try {
       result.repeatedUninstall = true;
     } catch (error: any) {
       result.cleanupError = String(error.message).slice(0, 1200);
+      result.passed = false;
+    }
+  }
+  if (foreignSettingsActive) {
+    try {
+      await foreignWriter("restore");
+      foreignSettingsActive = false;
+    } catch (error: any) {
+      result.foreignCleanupError = String(error.message);
       result.passed = false;
     }
   }

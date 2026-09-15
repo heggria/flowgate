@@ -6,7 +6,7 @@ import Darwin
     static func main() async {
         guard CommandLine.arguments.count == 2,
               let url = URL(string: CommandLine.arguments[1]),
-              url.scheme == "http", url.host == "198.18.0.88" else { exit(64) }
+              url.scheme == "http", ["198.18.0.88", "198.18.0.89"].contains(url.host ?? "") else { exit(64) }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 12
         configuration.timeoutIntervalForResource = 15

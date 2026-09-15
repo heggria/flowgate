@@ -55,6 +55,12 @@ helper 强杀后，在恢复断言之前没有重新调用 helper，避免用重
 
 新增 `prepare:application-release` 在完整签名、同团队原生组件、公证票据、Gatekeeper、清单和版本递增检查之后准备 ZIP、静态更新目录、源码和校验和，不上传文件。真实开发包被按预期拒绝，正式签名成功路径仍未验证。用唯一标识的隔离 Electron 副本运行实际 Squirrel 解析器，生成的同版本目录、损坏 JSON、缺下载地址、下一次检查恢复均通过；未下载或安装任何更新。详见 [APPLICATION_UPDATES.md](APPLICATION_UPDATES.md)。发布工具与新增解析测试还需要后续提交的远程检查。
 
+## 生产完整 TUN 补充验收
+
+`10a241c` 的 [push 检查](https://github.com/heggria/flowgate/actions/runs/34936892966) 和 [PR 检查](https://github.com/heggria/flowgate/actions/runs/34936896175) 均通过。新增第 12 项直接使用生产编译配置：完整 TUN、专用规则到本机 HTTP 节点、其余直连，与独立定向 TUN 同时真实转发。没有测试用的 lo0 绑定或 /32 接管缩减。公开 IPv4 地址的路由指向本应用 TUN，HTTPS 请求与停止后恢复通过；独立 TUN 在本应用停止后继续转发。证据为 `work/readiness/ci10a-privileged-result.json`。该场景未发现需要额外绑定 lo0 的产品缺陷，但仍不代表任意 VPN、Service 的完整协调策略或外部 IPv6。
+
+另新增独立 Swift SCPreferences 写入器，在临时 CI 机器上修改有效 HTTP 代理，再检查正常停止/helper 崩溃能否保留第三方 HTTP 设置、恢复自己仍拥有的 HTTPS/SOCKS，并由 URLSession 实际访问第三方出口。此新场景仅完成编译、类型检查和本机拒绝执行守卫验证，实际结果待后续 CI。
+
 ## 仍未完成
 
 完整 TUN 与 VPN 共存矩阵、外部 IPv6、真实睡眠和切网、日常长稳、正式 Apple 签名/公证以及完整应用更新仍待补齐。持续标准见 [RELEASE_READINESS.md](RELEASE_READINESS.md)，动态进度见 `work/STATE.md`。
