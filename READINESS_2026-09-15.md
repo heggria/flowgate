@@ -12,14 +12,14 @@
 
 在无既有辅助服务的临时 GitHub-hosted macOS 机器上，使用生产安装器、XPC 与 root helper 完成以下六项；不是注入系统后端。
 
-| 接入方式 | 场景 | 实际请求 | 进程退出与设置恢复 |
-|---|---|---|---|
-| 系统代理 | 正常停止 | 通过 macOS URLSession 自动代理发现转发 | 通过 |
-| 系统代理 | 内核 SIGKILL | 强杀前真实转发通过 | 通过 |
-| 系统代理 | helper SIGKILL | 强杀前真实转发通过 | 通过 |
-| 定向 TUN | 正常停止 | 通过 `198.18.0.88/32` 路由转发 | 通过 |
-| 定向 TUN | 内核 SIGKILL | 强杀前真实转发通过 | 通过 |
-| 定向 TUN | helper SIGKILL | 强杀前真实转发通过 | 通过 |
+| 接入方式 | 场景           | 实际请求                               | 进程退出与设置恢复 |
+| -------- | -------------- | -------------------------------------- | ------------------ |
+| 系统代理 | 正常停止       | 通过 macOS URLSession 自动代理发现转发 | 通过               |
+| 系统代理 | 内核 SIGKILL   | 强杀前真实转发通过                     | 通过               |
+| 系统代理 | helper SIGKILL | 强杀前真实转发通过                     | 通过               |
+| 定向 TUN | 正常停止       | 通过 `198.18.0.88/32` 路由转发         | 通过               |
+| 定向 TUN | 内核 SIGKILL   | 强杀前真实转发通过                     | 通过               |
+| 定向 TUN | helper SIGKILL | 强杀前真实转发通过                     | 通过               |
 
 helper 强杀后，在恢复断言之前没有重新调用 helper，避免用重启恢复替代 watchdog 证据。最终使用生产卸载器清理；代理、DNS、默认路由与原值一致，辅助服务安装文件已移除。对应结果为 `work/readiness/ci6f-results/privileged-ci-result.json`，包构建号为 79。
 
@@ -53,13 +53,15 @@ helper 强杀后，在恢复断言之前没有重新调用 helper，避免用重
 
 `74d88ab23af4f5507997a0ac7d3e889b32651886` 的 [push 检查](https://github.com/heggria/flowgate/actions/runs/34934928108) 和 [PR 检查](https://github.com/heggria/flowgate/actions/runs/34934930985) 均通过。107 项单元测试、完整行为/UI/安装包与归档检查通过；实际 root 流程的六项基线、三个双 TUN 场景、替换校验失败保留旧服务、同版本重装共 11 项通过，重复卸载后安装文件移除，系统代理/DNS/默认路由与之前一致。两个 TUN 使用独立内核、专用路由和各自受限的 HTTP 出口；这仍不是全局 TUN 与任意 VPN 的完整验收。日志提取结果为 `work/readiness/ci74-privileged-result.json`。
 
-新增 `prepare:application-release` 在完整签名、同团队原生组件、公证票据、Gatekeeper、清单和版本递增检查之后准备 ZIP、静态更新目录、源码和校验和，不上传文件。真实开发包被按预期拒绝，正式签名成功路径仍未验证。用唯一标识的隔离 Electron 副本运行实际 Squirrel 解析器，生成的同版本目录、损坏 JSON、缺下载地址、下一次检查恢复均通过；未下载或安装任何更新。详见 [APPLICATION_UPDATES.md](APPLICATION_UPDATES.md)。发布工具与新增解析测试还需要后续提交的远程检查。
+新增 `prepare:application-release` 在完整签名、同团队原生组件、公证票据、Gatekeeper、清单和版本递增检查之后准备 ZIP、静态更新目录、源码和校验和，不上传文件。真实开发包被按预期拒绝，正式签名成功路径仍未验证。用唯一标识的隔离 Electron 副本运行实际 Squirrel 解析器，生成的同版本目录、损坏 JSON、缺下载地址、下一次检查恢复均通过；未下载或安装任何更新。详见 [APPLICATION_UPDATES.md](APPLICATION_UPDATES.md)。发布工具与新增解析测试已在 `f0a678e` 的 push 检查中通过；正式签名成功路径仍需凭据与实际产物验收。
 
 ## 生产完整 TUN 补充验收
 
 `10a241c` 的 [push 检查](https://github.com/heggria/flowgate/actions/runs/34936892966) 和 [PR 检查](https://github.com/heggria/flowgate/actions/runs/34936896175) 均通过。新增第 12 项直接使用生产编译配置：完整 TUN、专用规则到本机 HTTP 节点、其余直连，与独立定向 TUN 同时真实转发。没有测试用的 lo0 绑定或 /32 接管缩减。公开 IPv4 地址的路由指向本应用 TUN，HTTPS 请求与停止后恢复通过；独立 TUN 在本应用停止后继续转发。证据为 `work/readiness/ci10a-privileged-result.json`。该场景未发现需要额外绑定 lo0 的产品缺陷，但仍不代表任意 VPN、Service 的完整协调策略或外部 IPv6。
 
-另新增独立 Swift SCPreferences 写入器，在临时 CI 机器上修改有效 HTTP 代理，再检查正常停止/helper 崩溃能否保留第三方 HTTP 设置、恢复自己仍拥有的 HTTPS/SOCKS，并由 URLSession 实际访问第三方出口。此新场景仅完成编译、类型检查和本机拒绝执行守卫验证，实际结果待后续 CI。
+另新增独立 Swift SCPreferences 写入器，在临时 CI 机器上修改有效 HTTP 代理，再检查正常停止/helper 崩溃能否保留第三方 HTTP 设置、恢复自己仍拥有的 HTTPS/SOCKS，并由 URLSession 实际访问第三方出口。这两项在 `46e0ae5` 的 [push 检查](https://github.com/heggria/flowgate/actions/runs/34937776955) 与 [PR 检查](https://github.com/heggria/flowgate/actions/runs/34937778466) 均通过，包含此前场景共 14 项真实特权验收。分支精确提交的证据为 `work/readiness/ci46-privileged-result.json`；PR 构建使用 GitHub 合并提交 `4b9e8cf`，另存 `ci46-pr-privileged-result.json`。最后卸载、安装文件移除和网络设置恢复通过。
+
+另准备了 Service 自动协调场景：同一受保护 CI 入口直接组合生产 Service、原生会话和真实系统检查器。第三方改写后等待正常轮询自行停止本应用，并核对持久化成功操作、第三方设置和实际转发。未新增桌面权限开关；类型检查、7 项相关单元测试和本机拒绝执行守卫通过，远程实际结果尚未产生。该场景只覆盖自动让出系统代理，不能代表所有网络变化策略。
 
 ## 仍未完成
 

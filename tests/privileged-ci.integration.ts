@@ -11,6 +11,9 @@ import { promisify } from "node:util";
 import { mkdir, readFile, writeFile, access } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { resolve, join } from "node:path";
+import { ServiceCore } from "../packages/service/src/core";
+import { StateStore } from "../packages/service/src/store";
+import { inspectSystem } from "../src/platform/macos";
 import { NativeSession } from "../packages/shell/src/native-session";
 import {
   compileConfiguration,
@@ -170,8 +173,12 @@ peerProxy.on("connect", (request, socket, head) => {
 });
 await new Promise<void>((r) => peerProxy.listen(0, "127.0.0.1", r));
 const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
-async function wait(check: () => Promise<boolean>, label: string) {
-  const deadline = Date.now() + 18000;
+async function wait(
+  check: () => Promise<boolean>,
+  label: string,
+  timeout = 18000,
+) {
+  const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
     if (await check()) return;
     await pause(150);
@@ -288,6 +295,7 @@ async function startPeer() {
   await packet("198.18.0.89");
 }
 let native: NativeSession | undefined;
+let service: ServiceCore | undefined;
 let attemptedInstallation = false;
 let foreignSettingsActive = false;
 const foreignSnapshot = join(root, "foreign-proxies.plist");
@@ -607,7 +615,7 @@ try {
     actualForwarding: true,
     settingsRestored: true,
   });
-  for (const fault of ["none", "helper"] as const) {
+  for (const fault of ["none", "helper", "service"] as const) {
     result.phase = `foreign-proxy-${fault}`;
     await foreignWriter("capture");
     foreignSettingsActive = true;
@@ -635,12 +643,38 @@ try {
         options: {},
       },
     ];
-    const ownState = await native.apply(
-      compileConfiguration(ownConfiguration),
-      1,
-      `foreign-${fault}`,
-      "system",
-    );
+    if (fault === "service") {
+      // Exercise the production coordinator and inspector directly. No Electron
+      // test flag grants privileges; the enclosing disposable-runner guard applies.
+      const store = new StateStore(join(root, "service-foreign-state"), 1);
+      store.configuration = ownConfiguration;
+      service = new ServiceCore(
+        store,
+        native,
+        async (method, _payload, signal) => {
+          if (method === "network.inspect")
+            return { ...(await inspectSystem(signal)), plugins: [] };
+          throw new Error(
+            "This fixture supplies only the real network inspector",
+          );
+        },
+        "privileged-ci",
+      );
+      await service.start();
+      await service.request("network.refresh", {});
+      await service.request("proxy.connect", {}, "service-foreign-connect");
+      // Settle the observation of our own proxy before external takeover.
+      await service.request("network.refresh", {});
+      await service.request("network.refresh", {});
+    } else {
+      await native.apply(
+        compileConfiguration(ownConfiguration),
+        1,
+        `foreign-${fault}`,
+        "system",
+      );
+    }
+    const ownState = await native.status();
     assert.equal(ownState.status, "running");
     assert.ok(ownState.pid);
     await exec(
@@ -655,7 +689,24 @@ try {
       "Independent HTTP proxy did not become effective",
     );
     if (fault === "none") await native.stop("stop-foreign-proxy");
-    else await privileged("/bin/kill", ["-KILL", String(await helperPID())]);
+    else if (fault === "helper")
+      await privileged("/bin/kill", ["-KILL", String(await helperPID())]);
+    else {
+      // Wait for the ordinary 15s observer, without injecting an event or manually
+      // disconnecting. Its persisted operation must explain the actual stop.
+      await wait(
+        async () =>
+          (await native!.status()).status === "stopped" &&
+          service!.store.operations.some(
+            (operation) =>
+              operation.id.startsWith("network-") &&
+              operation.kind === "proxy.disconnect" &&
+              operation.state === "succeeded",
+          ),
+        "Service did not automatically yield with a completed disconnect operation",
+        45000,
+      );
+    }
     // No XPC call before checking the independent watchdog's outcome.
     await wait(async () => {
       if (await alive(ownState.pid!)) return false;
@@ -676,8 +727,10 @@ try {
       peerForwarded > requestsBefore,
       "macOS must still use the independent HTTP proxy",
     );
+    await service?.stop();
+    service = undefined;
     await native.close().catch((error) => {
-      if (fault === "none") throw error;
+      if (fault !== "helper") throw error;
     });
     native = undefined;
     await foreignWriter("restore");
@@ -689,6 +742,7 @@ try {
     result.checks.push({
       scenario: `foreign-system-proxy-${fault}`,
       actualForwarding: true,
+      ...(fault === "service" ? { realObserverAutomaticDisconnect: true } : {}),
       foreignHTTPPreserved: true,
       ownedHTTPSAndSOCKSRestored: true,
       kernelExited: true,
@@ -793,6 +847,12 @@ try {
   result.error = String(error.message).slice(0, 1600);
   result.passed = false;
 } finally {
+  try {
+    await service?.stop();
+  } catch (error: any) {
+    result.serviceCleanupError = String(error.message);
+    result.passed = false;
+  }
   try {
     await native?.close();
   } catch {}
