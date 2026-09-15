@@ -195,6 +195,94 @@ test("network changes reconnect the applied revision, ignore unchanged polls, an
 });
 
 import { networkPath } from "../packages/domain/src/network-path";
+test("a saved unapplied mode change cannot prevent yielding an applied system proxy", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "flowgate-network-draft-"));
+  let observed: NetworkState = {
+    interfaces: [{ name: "en0", addresses: ["192.168.1.2"] }],
+    capturedAt: "",
+    defaultInterface: "en0",
+    defaultGateway: "192.168.1.1",
+    proxyEnabled: false,
+    dns: [],
+    routes: [],
+    warnings: [],
+    plugins: [],
+  };
+  let kernel: KernelState = { status: "stopped", systemControl: true };
+  let applies = 0,
+    stops = 0;
+  const store = new StateStore(directory, 1);
+  store.configuration.settings.mode = "system";
+  const core = new ServiceCore(
+    store,
+    {
+      status: async () => kernel,
+      apply: async (_config, revision, operationId) => {
+        applies++;
+        return (kernel = {
+          status: "running",
+          systemControl: true,
+          appliedRevision: revision,
+          operationId,
+          systemProxyOwned: true,
+        });
+      },
+      stop: async (operationId) => {
+        stops++;
+        return (kernel = {
+          status: "stopped",
+          systemControl: true,
+          operationId,
+        });
+      },
+    },
+    async (method) =>
+      method === "network.inspect" ? structuredClone(observed) : {},
+    "test",
+  );
+  try {
+    await core.start();
+    await core.request("network.refresh", {});
+    await core.request("proxy.connect", {}, "applied-system");
+    const appliedRevision = store.configuration.revision;
+    await core.request(
+      "configuration.save",
+      {
+        revision: appliedRevision,
+        settings: { mode: "manual" },
+        rules: store.configuration.rules,
+      },
+      "save-without-applying",
+    );
+    assert.equal(kernel.appliedRevision, appliedRevision);
+    assert.notEqual(store.configuration.revision, appliedRevision);
+    // An ordinary path change must not apply the pending settings.
+    observed.defaultGateway = "192.168.1.254";
+    await core.request("network.refresh", {});
+    assert.equal(applies, 1);
+    assert.equal(stops, 0);
+    // The active connection is still system mode despite the saved manual mode.
+    observed.proxyEnabled = true;
+    observed.systemProxies = [{ kind: "http", host: "127.0.0.1", port: 12345 }];
+    kernel.systemProxyOwned = false;
+    await core.request("network.refresh", {});
+    assert.equal(
+      stops,
+      1,
+      "Ownership loss must stop the applied system connection",
+    );
+    assert.equal(applies, 1, "Pending configuration must remain unapplied");
+    assert.equal(store.configuration.settings.mode, "manual");
+    assert.equal(
+      [...store.operations].reverse().find((o) => o.kind === "proxy.disconnect")
+        ?.nativeMode,
+      "system",
+    );
+  } finally {
+    await core.stop();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 test("network coordination ignores neighbour expiry, host clones and observation ordering", () => {
   const before: NetworkState = {
     capturedAt: "",

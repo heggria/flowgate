@@ -210,19 +210,34 @@ export class ServiceCore {
     if (networkPath(previous, own) === networkPath(state, own)) return;
     this.invalidateMeasurements();
     if (kernel.status !== "running" || this.hasUnknownNative()) return;
-    if (kernel.appliedRevision !== this.store.configuration.revision) {
+    const applied = this.store.appliedConnection;
+    const lostAppliedSystemProxy =
+      applied?.mode === "system" &&
+      applied.operationId === kernel.operationId &&
+      applied.revision === kernel.appliedRevision &&
+      state.proxyEnabled &&
+      kernel.systemProxyOwned === false;
+    if (
+      kernel.appliedRevision !== this.store.configuration.revision &&
+      !lostAppliedSystemProxy
+    ) {
       state.warnings.push(
         "网络已变化，当前有尚未应用的配置；请确认配置后重新连接。",
       );
       return;
     }
-    const conflicts = networkConflicts(this.store.configuration, state, kernel);
-    const blocked = conflicts.filter((c) => c.severity === "blocked");
+    // A saved draft cannot change the mode of the connection already running.
+    // Yielding ownership stops that connection; it never applies the draft.
+    const blocked =
+      lostAppliedSystemProxy ||
+      networkConflicts(this.store.configuration, state, kernel).some(
+        (c) => c.severity === "blocked",
+      );
     const id = "network-" + randomUUID();
     // Reuse the same serialized, persisted native operation path as user changes.
     // Never reclaim proxy settings after another application has taken ownership.
     await this.request(
-      blocked.length ? "proxy.disconnect" : "proxy.connect",
+      blocked ? "proxy.disconnect" : "proxy.connect",
       {
         networkExpectedOperation: kernel.operationId ?? null,
         networkExpectedRevision: kernel.appliedRevision,
@@ -230,7 +245,7 @@ export class ServiceCore {
       id,
     );
     (this.network ?? state).warnings.push(
-      blocked.length
+      blocked
         ? "检测到网络冲突，已停止本应用连接并按所有权恢复设置。解决冲突后请重新连接。"
         : "网络路径已变化，已用当前已应用配置重新建立本应用连接。",
     );
@@ -513,7 +528,9 @@ export class ServiceCore {
           current.status !== "running" ||
           (current.operationId ?? null) !== payload.networkExpectedOperation ||
           current.appliedRevision !== payload.networkExpectedRevision ||
-          this.store.configuration.revision !== payload.networkExpectedRevision
+          (method !== "proxy.disconnect" &&
+            this.store.configuration.revision !==
+              payload.networkExpectedRevision)
         )
           return;
       }
@@ -523,7 +540,13 @@ export class ServiceCore {
           requestTrace.getStore()?.traceId ?? randomUUID().replaceAll("-", ""),
         kind: method,
         ...(["proxy.connect", "proxy.disconnect"].includes(method)
-          ? { nativeMode: this.store.configuration.settings.mode }
+          ? {
+              nativeMode:
+                method === "proxy.disconnect"
+                  ? (this.store.appliedConnection?.mode ??
+                    this.store.configuration.settings.mode)
+                  : this.store.configuration.settings.mode,
+            }
           : {}),
         state: "pending" as const,
         revision: this.store.configuration.revision,

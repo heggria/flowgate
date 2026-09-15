@@ -298,6 +298,14 @@ let native: NativeSession | undefined;
 let service: ServiceCore | undefined;
 let attemptedInstallation = false;
 let foreignSettingsActive = false;
+let routeFixtureActive = false;
+const routeFixture = "198.18.2.0/24";
+const hasFixtureRoute = (routes: string[]) =>
+  routes.some((line) =>
+    ["198.18.2", "198.18.2/24", "198.18.2.0/24"].includes(
+      line.trim().split(/\s+/)[0],
+    ),
+  );
 const foreignSnapshot = join(root, "foreign-proxies.plist");
 const foreignWriter = (mode: string, port?: number) =>
   privileged("/usr/bin/env", [
@@ -666,6 +674,101 @@ try {
       // Settle the observation of our own proxy before external takeover.
       await service.request("network.refresh", {});
       await service.request("network.refresh", {});
+      result.phase = "service-route-add";
+      assert.equal(hasFixtureRoute((await inspectSystem()).routes), false);
+      const routeBefore = await routeInterface("198.18.2.1");
+      assert.ok(routeBefore && routeBefore !== "lo0");
+      const connectionBefore = await native.status();
+      await exec(
+        join(root, "http-probe"),
+        [`http://198.18.0.88:${originPort}/`],
+        { timeout: 20000 },
+      );
+      // A real, isolated route update from outside FlowGate. No injected network
+      // event or physical-link claim; this prefix never carries ordinary traffic.
+      routeFixtureActive = true;
+      await privileged("/sbin/route", [
+        "-n",
+        "add",
+        "-net",
+        routeFixture,
+        "-interface",
+        "lo0",
+      ]);
+      assert.equal(await routeInterface("198.18.2.1"), "lo0");
+      await wait(
+        async () => {
+          const current = await native!.status();
+          return (
+            hasFixtureRoute(service!.network?.routes ?? []) &&
+            current.status === "running" &&
+            current.pid !== connectionBefore.pid &&
+            service!.store.operations.some(
+              (operation) =>
+                operation.id === current.operationId &&
+                operation.id.startsWith("network-") &&
+                operation.kind === "proxy.connect" &&
+                operation.state === "succeeded" &&
+                operation.revision === connectionBefore.appliedRevision,
+            )
+          );
+        },
+        "Service did not automatically reconnect after a real route addition",
+        45000,
+      );
+      assert.equal(await alive(connectionBefore.pid!), false);
+      const reapplied = await native.status();
+      assert.equal(reapplied.appliedRevision, connectionBefore.appliedRevision);
+      await exec(
+        join(root, "http-probe"),
+        [`http://198.18.0.88:${originPort}/`],
+        { timeout: 20000 },
+      );
+      await service.request(
+        "configuration.save",
+        {
+          revision: service.store.configuration.revision,
+          settings: { mode: "manual" },
+          rules: service.store.configuration.rules,
+        },
+        "service-save-unapplied-mode",
+      );
+      assert.notEqual(
+        service.store.configuration.revision,
+        reapplied.appliedRevision,
+      );
+      result.phase = "service-route-remove-with-draft";
+      await privileged("/sbin/route", ["-n", "delete", "-net", routeFixture]);
+      routeFixtureActive = false;
+      assert.equal(await routeInterface("198.18.2.1"), routeBefore);
+      await wait(
+        async () =>
+          !hasFixtureRoute(service!.network?.routes ?? []) &&
+          service!.network!.warnings.some((warning) =>
+            warning.includes("尚未应用的配置"),
+          ),
+        "Service did not observe route removal while preserving the pending draft",
+        45000,
+      );
+      assert.equal((await native.status()).pid, reapplied.pid);
+      assert.equal(
+        (await native.status()).appliedRevision,
+        reapplied.appliedRevision,
+      );
+      await exec(
+        join(root, "http-probe"),
+        [`http://198.18.0.88:${originPort}/`],
+        { timeout: 20000 },
+      );
+      result.checks.push({
+        scenario: "service-real-route-change",
+        automaticReapply: true,
+        pendingDraftNotApplied: true,
+        previousKernelExited: true,
+        actualForwarding: true,
+        routeRestored: true,
+      });
+      result.phase = "foreign-proxy-service-with-draft";
     } else {
       await native.apply(
         compileConfiguration(ownConfiguration),
@@ -706,6 +809,19 @@ try {
         "Service did not automatically yield with a completed disconnect operation",
         45000,
       );
+      assert.equal(service!.store.configuration.settings.mode, "manual");
+      assert.notEqual(
+        service!.store.configuration.revision,
+        ownState.appliedRevision,
+      );
+      assert.equal(
+        service!.store.operations.find(
+          (operation) =>
+            operation.id.startsWith("network-") &&
+            operation.kind === "proxy.disconnect",
+        )?.nativeMode,
+        "system",
+      );
     }
     // No XPC call before checking the independent watchdog's outcome.
     await wait(async () => {
@@ -743,6 +859,7 @@ try {
       scenario: `foreign-system-proxy-${fault}`,
       actualForwarding: true,
       ...(fault === "service" ? { realObserverAutomaticDisconnect: true } : {}),
+      ...(fault === "service" ? { pendingModeChangePreserved: true } : {}),
       foreignHTTPPreserved: true,
       ownedHTTPSAndSOCKSRestored: true,
       kernelExited: true,
@@ -852,6 +969,15 @@ try {
   } catch (error: any) {
     result.serviceCleanupError = String(error.message);
     result.passed = false;
+  }
+  if (routeFixtureActive) {
+    try {
+      await privileged("/sbin/route", ["-n", "delete", "-net", routeFixture]);
+      routeFixtureActive = false;
+    } catch (error: any) {
+      result.routeCleanupError = String(error.message);
+      result.passed = false;
+    }
   }
   try {
     await native?.close();
