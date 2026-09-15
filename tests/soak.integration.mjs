@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
-import { resolve, join } from "node:path";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { resolve, join, dirname } from "node:path";
 import { isolateProxyPort } from "./proxy-fixture.mjs";
 import { verifyArtifacts } from "../scripts/artifacts.mjs";
 
@@ -25,6 +25,7 @@ const output = resolve(
   process.env.FLOWGATE_SOAK_RESULT ?? "work/soak-result.json",
 );
 await mkdir(resolve("work"), { recursive: true });
+await mkdir(dirname(output), { recursive: true });
 const data = await mkdtemp(resolve("work/soak-private-"));
 const exec = promisify(execFile);
 const observe = async () => ({
@@ -50,7 +51,6 @@ const result = {
   cycles: 0,
   reloads: 0,
 };
-const retired = new Set();
 let app,
   page,
   currentPID,
@@ -111,7 +111,6 @@ try {
       await command("proxy.disconnect");
       assert.equal((await snapshot()).kernel.status, "stopped");
       assert.equal(alive(oldPID), false, "Stopped kernel must not survive");
-      retired.add(oldPID);
       await command("proxy.connect");
       currentPID = (await snapshot()).kernel.pid;
       result.cycles++;
@@ -168,8 +167,13 @@ try {
         .getAppMetrics()
         .reduce((sum, metric) => sum + metric.memory.workingSetSize, 0),
     );
+    const elapsed = Math.round((Date.now() - started) / 1000);
+    assert.ok(
+      elapsed - (result.samples.at(-1)?.seconds ?? 0) <= 60,
+      "Long observation gap: continuous runtime was not verified",
+    );
     result.samples.push({
-      seconds: Math.round((Date.now() - started) / 1000),
+      seconds: elapsed,
       requests: responses.length,
       memoryKiB,
     });
@@ -196,11 +200,15 @@ try {
     );
   }
   result.elapsedSeconds = Math.round((Date.now() - started) / 1000);
+  assert.ok(
+    result.elapsedSeconds - (result.samples.at(-1)?.seconds ?? 0) <= 60,
+    "Long final observation gap: continuous runtime was not verified",
+  );
   assert.equal(interrupted, false, "Soak interrupted before completion");
   await command("proxy.disconnect");
-  retired.add(currentPID);
-  for (const pid of retired)
-    assert.equal(alive(pid), false, "Retired test kernel is still alive");
+  // Earlier kernels were checked immediately after each stop. Rechecking old
+  // numeric PIDs after a long run could misidentify an unrelated reused PID.
+  assert.equal(alive(currentPID), false, "Stopped test kernel is still alive");
   assert.equal((await snapshot()).kernel.status, "stopped");
   result.requests = served;
   assert.equal(served, result.samples.length * 2);
