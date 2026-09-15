@@ -1,4 +1,5 @@
 import { manageLocalHelper } from "../../packages/shell/src/local-helper";
+import { RECOVERY_DISCONNECT_OPERATION_ID } from "../../packages/contracts/src/index";
 import {
   readAppearance,
   setAppearance,
@@ -681,7 +682,7 @@ else {
         if (input?.method === "recovery.status")
           return { message: recoveryMessage };
         if (input?.method === "recovery.disconnect") {
-          await native.stop("recovery-disconnect");
+          await native.stop(RECOVERY_DISCONNECT_OPERATION_ID);
           return native.status();
         }
         if (

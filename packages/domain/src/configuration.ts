@@ -277,9 +277,10 @@ export function compileConfiguration(c: Configuration) {
           : "udp",
     tag: "resolver",
     server: dns.hostname,
+    domain_resolver: "bootstrap",
     ...(dns.port ? { server_port: Number(dns.port) } : {}),
     ...(dns.protocol === "https:"
-      ? { path: dns.pathname || "/dns-query" }
+      ? { path: (dns.pathname || "/dns-query") + dns.search }
       : {}),
     ...(c.settings.selectedNode !== "direct"
       ? { detour: c.settings.selectedNode }
@@ -297,8 +298,11 @@ export function compileConfiguration(c: Configuration) {
             : "udp",
       tag: "dns-" + network.id,
       server: u.hostname,
+      domain_resolver: "bootstrap",
       ...(u.port ? { server_port: Number(u.port) } : {}),
-      ...(u.protocol === "https:" ? { path: u.pathname || "/dns-query" } : {}),
+      ...(u.protocol === "https:"
+        ? { path: (u.pathname || "/dns-query") + u.search }
+        : {}),
       detour: network.id,
     };
   });

@@ -14,6 +14,7 @@ final class NetworkEngine {
     var mode = "manual"
     var tunInterface: String?
     var lastError: String?
+    var recoveryPending = false
     init(kernelPath: String, directory: URL, privileged: Bool) throws {
         self.controlPort=try availableLoopbackPort()
         self.kernelPath = kernelPath; self.directory = directory; self.privileged = privileged
@@ -31,6 +32,10 @@ final class NetworkEngine {
         }
     }
     func reconcile() {
+        if recoveryPending {
+            do { try stop() } catch { /* Retain the owned process for another cleanup attempt. */ }
+            return
+        }
         if let p=kernel, !p.isRunning, revision != nil {
             if privileged {do {try proxies.restore()}catch {lastError="内核已退出，系统配置恢复待重试";return}}
             kernel=nil;revision=nil;lastError="内核意外退出，已恢复本应用拥有的设置"
@@ -38,7 +43,7 @@ final class NetworkEngine {
     }
     func state() -> [String: Any] {
         reconcile()
-        var value: [String: Any] = ["status": kernel?.isRunning == true ? "running" : lastError == nil ? "stopped" : "failed", "systemControl": privileged, "version": "1.14.0"]
+        var value: [String: Any] = ["status": recoveryPending ? "unknown" : kernel?.isRunning == true ? "running" : lastError == nil ? "stopped" : "failed", "systemControl": privileged, "version": "1.14.0"]
         if let process = kernel, process.isRunning { value["pid"] = process.processIdentifier; value["appliedRevision"] = revision }
         value["operationId"] = operation
         if kernel?.isRunning == true { value["tunInterface"] = tunInterface }
@@ -47,15 +52,22 @@ final class NetworkEngine {
         return value
     }
     func stop() throws {
-        // Undo global settings while the owned endpoint still exists.
-        if privileged { try proxies.restore() }
-        if let p = kernel, p.isRunning {
-            p.terminate(); let deadline = Date().addingTimeInterval(4)
-            while p.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.02) }
-            if p.isRunning { kill(p.processIdentifier, SIGKILL); p.waitUntilExit() }
+        do {
+            // Undo global settings while the owned endpoint still exists.
+            if privileged { try proxies.restore() }
+            if let p = kernel, p.isRunning {
+                p.terminate(); let deadline = Date().addingTimeInterval(4)
+                while p.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.02) }
+                if p.isRunning { kill(p.processIdentifier, SIGKILL); p.waitUntilExit() }
+            }
+            kernel = nil; revision = nil; tunInterface = nil
+            journal.record.phase = "stopped"; journal.record.kernelPID = nil; journal.record.kernelBirth=nil; try journal.persist()
+            lastError = nil; recoveryPending = false
+        } catch {
+            recoveryPending = true
+            lastError = "本应用连接清理尚未完成，状态未知；暂停应用配置并重试断开"
+            throw error
         }
-        kernel = nil; revision = nil; lastError = nil; tunInterface = nil
-        journal.record.phase = "stopped"; journal.record.kernelPID = nil; journal.record.kernelBirth=nil; try journal.persist()
     }
     func validate(_ config: [String: Any], mode: String) throws {
         guard Set(config.keys).isSubset(of: ["log", "dns", "inbounds", "outbounds", "route"]),
@@ -80,6 +92,7 @@ final class NetworkEngine {
         try checkKeys(config)
     }
     func apply(_ payload: [String: Any]) throws {
+        guard !recoveryPending else { throw NSError(domain: "上次连接恢复尚未完成，请先重试断开", code: 41) }
         guard let config = payload["config"] as? [String: Any], let rev = payload["revision"] as? Int, let op = payload["operationId"] as? String else { throw NSError(domain: "无效原生请求", code: 24) }
         let mode = payload["mode"] as? String ?? "manual"
         guard ["manual", "system", "tun"].contains(mode), mode == "manual" || privileged else { throw NSError(domain: "请先安装并批准系统辅助服务", code: 25) }
@@ -111,20 +124,35 @@ final class NetworkEngine {
             try Data(contentsOf: candidate).write(to: active, options: .atomic)
             try launch(active); revision = rev; operation = op; self.mode=mode; lastError = nil
             if mode == "system", let inbounds = config["inbounds"] as? [[String: Any]], let port = inbounds.first?["listen_port"] as? Int {
-                try proxies.apply(port: port, operationId: op)
-                let deadline = Date().addingTimeInterval(2)
-                while !proxies.isEffective() && Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
-                guard proxies.isEffective() else { throw NSError(domain: "系统代理未实际生效，已尝试恢复；请检查当前 VPN 或其他网络工具", code: 40) }
+                try applySystemProxy(port: port, operationId: op)
             }
             journal.record.phase = "running"; journal.record.operationId = op; journal.record.kernelPID = kernel?.processIdentifier; journal.record.kernelBirth=kernel.map {processBirth($0.processIdentifier)} ?? nil; try journal.persist()
         } catch {
-            try? stop()
-            if hadKernel, let previous = previous { try previous.write(to: active, options: .atomic); try launch(active); revision = oldRevision; self.mode=oldMode;operation=oldOperation
-                if oldMode=="system",let previousConfig=try JSONSerialization.jsonObject(with:previous) as? [String:Any],let inbounds=previousConfig["inbounds"] as? [[String:Any]],let port=inbounds.first?["listen_port"] as? Int {try proxies.apply(port:port,operationId:oldOperation ?? "rollback")}
+            // Never overwrite the only handle to a kernel whose cleanup failed.
+            // It may still own live routes/proxy settings and must remain recoverable.
+            try stop()
+            if hadKernel, let previous = previous {
+                do {
+                    try previous.write(to: active, options: .atomic); try launch(active)
+                    revision = oldRevision; self.mode=oldMode;operation=oldOperation
+                    if oldMode=="system",let previousConfig=try JSONSerialization.jsonObject(with:previous) as? [String:Any],let inbounds=previousConfig["inbounds"] as? [[String:Any]],let port=inbounds.first?["listen_port"] as? Int {
+                        try applySystemProxy(port:port,operationId:oldOperation ?? "rollback")
+                    }
+                } catch {
+                    try stop()
+                    lastError = "新配置与旧配置恢复均失败，已停止本应用连接"
+                    throw error
+                }
             }
             lastError = "新配置应用失败；已尝试保留之前的内核配置"
             throw error
         }
+    }
+    private func applySystemProxy(port: Int, operationId: String) throws {
+        try proxies.apply(port: port, operationId: operationId)
+        let deadline = Date().addingTimeInterval(2)
+        while !proxies.isEffective() && Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
+        guard proxies.isEffective() else { throw NSError(domain: "系统代理未实际生效，已尝试恢复；请检查当前 VPN 或其他网络工具", code: 40) }
     }
     private func launch(_ path: URL) throws {
         let process = Process(); process.executableURL = URL(fileURLWithPath: kernelPath); process.arguments = ["run", "-c", path.path]

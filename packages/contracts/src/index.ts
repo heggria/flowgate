@@ -124,7 +124,10 @@ export interface Configuration {
   rules: Rule[];
   settings: Settings;
 }
+export const RECOVERY_DISCONNECT_OPERATION_ID = "recovery-disconnect";
 export interface Operation {
+  nativeMode?: Settings["mode"];
+  recoveredBy?: string;
   context?: TraceContext;
   id: string;
   traceId: string;

@@ -1,4 +1,5 @@
 import type { RuntimeModule } from "../../runtime/src/lifecycle";
+import { RECOVERY_DISCONNECT_OPERATION_ID } from "../../contracts/src/index";
 import { KernelRuntime, singBoxAdapter } from "./kernel/adapter";
 import { networkPath } from "../../domain/src/network-path";
 import { requestTrace } from "../../runtime/src/trace-context";
@@ -286,6 +287,27 @@ export class ServiceCore {
     kernel ??= await this.native.status();
     let changed = false;
     for (const o of this.store.operations) {
+      // A user-requested emergency stop is an explicit recovery barrier, not
+      // evidence that the original connect succeeded. A manual bridge cannot
+      // attest that a privileged helper has restored its resources.
+      if (
+        o.state === "unknown" &&
+        ["proxy.connect", "proxy.disconnect"].includes(o.kind) &&
+        kernel.status === "stopped" &&
+        kernel.operationId === RECOVERY_DISCONNECT_OPERATION_ID &&
+        (kernel.systemControl ||
+          o.nativeMode === "manual" ||
+          (o.nativeMode === undefined &&
+            o.revision === this.store.configuration.revision &&
+            this.store.configuration.settings.mode === "manual"))
+      ) {
+        o.state = o.kind === "proxy.disconnect" ? "succeeded" : "failed";
+        o.completedAt = new Date().toISOString();
+        o.message = "已通过紧急断开停止本应用连接，可以重新连接。";
+        o.recoveredBy = RECOVERY_DISCONNECT_OPERATION_ID;
+        changed = true;
+        continue;
+      }
       if (
         o.state === "unknown" &&
         kernel.operationId === o.id &&
@@ -467,8 +489,16 @@ export class ServiceCore {
       signal?.throwIfAborted();
       await this.reconcileNative();
       const previous = this.store.operations.find((o) => o.id === operationId);
-      if (previous)
+      if (previous) {
+        if (previous.kind !== method)
+          throw new Error("此操作标识已用于其他操作，请使用新的标识");
+        if (previous.state !== "succeeded")
+          throw Object.assign(
+            new Error(previous.message || "此前操作尚未成功，请核对操作记录"),
+            { outcome: previous.state === "failed" ? "failed" : "unknown" },
+          );
         return { operation: previous, snapshot: await this.snapshot() };
+      }
       if (
         ["proxy.connect", "proxy.disconnect"].includes(method) &&
         this.hasUnknownNative()
@@ -492,6 +522,9 @@ export class ServiceCore {
         traceId:
           requestTrace.getStore()?.traceId ?? randomUUID().replaceAll("-", ""),
         kind: method,
+        ...(["proxy.connect", "proxy.disconnect"].includes(method)
+          ? { nativeMode: this.store.configuration.settings.mode }
+          : {}),
         state: "pending" as const,
         revision: this.store.configuration.revision,
         startedAt: new Date().toISOString(),
@@ -671,6 +704,25 @@ export class ServiceCore {
             );
           }
           if (method === "node.remove") {
+            if (!next.nodes.some((node) => node.id === payload?.id))
+              throw new Error("节点不存在，请刷新后重试");
+            const source = next.ruleSources?.find(
+              (source) => source.outbound === payload.id,
+            );
+            if (source)
+              throw new Error(
+                `规则集「${source.name}」仍使用此节点，请先在分流规则中移除该来源`,
+              );
+            for (const group of next.groups ?? []) {
+              if (!group.members.includes(payload.id)) continue;
+              const remaining = group.members.filter((id) => id !== payload.id);
+              if (!remaining.length)
+                throw new Error(
+                  `此节点是策略组「${group.name}」的最后一个成员，请先更新或重新导入该策略组`,
+                );
+              group.members = remaining;
+              if (group.selected === payload.id) group.selected = remaining[0];
+            }
             next.nodes = next.nodes.filter((n) => n.id !== payload?.id);
             if (next.settings.selectedNode === payload?.id)
               next.settings.selectedNode = "direct";

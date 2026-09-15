@@ -1,3 +1,4 @@
+import { RECOVERY_DISCONNECT_OPERATION_ID } from "../../contracts/src/index";
 /** Presentation-safe failures. Never keep request payloads, URLs or credentials. */
 export function safeMessage(value: unknown): string {
   return (value instanceof Error ? value.message : String(value ?? "操作失败"))
@@ -55,12 +56,16 @@ export function adviseFailure(value: unknown): ProblemAdvice {
       label: "查看辅助服务",
       approval: true,
     };
-  if (/状态未知|会话失联|unknown|ownership|所有权|恢复未完成/i.test(m))
+  if (
+    /状态未知|结果未知|结果尚未明确|会话失联|unknown|ownership|所有权|恢复未完成/i.test(
+      m,
+    )
+  )
     return {
       code: "STATE_UNKNOWN",
       title: "连接状态尚未确认",
       guidance:
-        "先刷新网络状态并查看操作记录，确认上次操作的结果后再继续，避免重复修改系统设置。",
+        "先核对网络状态。也可断开本应用连接并重新核对，确认清理完成后再连接；此操作不会关闭其他 VPN。",
       target: "network",
       label: "检查网络环境",
     };
@@ -219,7 +224,12 @@ export function createSnapshotProblemObserver(
       const signature = `${operation.id}:${operation.state}:${operation.message ?? ""}`;
       if (seen.get(operation.kind) === signature) continue;
       seen.set(operation.kind, signature);
-      if (operation.state === "failed" || operation.state === "unknown") {
+      if (operation.recoveredBy === RECOVERY_DISCONNECT_OPERATION_ID) {
+        store.resolve(operation.kind, operation.completedAt);
+      } else if (
+        operation.state === "failed" ||
+        operation.state === "unknown"
+      ) {
         reportOnce(
           operation.kind,
           operation.message ||

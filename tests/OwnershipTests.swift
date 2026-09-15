@@ -19,7 +19,9 @@ final class FixturePreferences: ProxyBackend, ProxyTransaction {
         do { try owner.apply(port: 17890, operationId: "pac"); fatalError("PAC overwritten") } catch { }
         precondition(journal.record.changes.isEmpty)
         backend.values["wifi"]?["ProxyAutoConfigEnable"] = 0
+        journal.record.kernelPID = 900001; journal.record.kernelBirth = "fixture-birth"
         try owner.apply(port: 17890, operationId: "owned")
+        precondition(journal.record.kernelPID == 900001 && journal.record.kernelBirth == "fixture-birth", "proxy apply lost watchdog kernel identity")
         precondition(owner.isCurrentOwner(operationId: "owned"))
         precondition(!owner.isCurrentOwner(operationId: "wrong-generation"))
         // Another application changes just one member of the HTTP group.
@@ -44,6 +46,16 @@ final class FixturePreferences: ProxyBackend, ProxyTransaction {
         backend.values["wifi"] = applied
         try SystemProxyOwner(journal: recovered, backend: backend).restore()
         precondition(recovered.record.phase == "restored" && backend.values["wifi"]!.isEmpty)
+        // A crash during proxy commit must retain the identity used by the
+        // independent watchdog, even before NetworkEngine.apply returns.
+        recovered.record.kernelPID = 900002; recovered.record.kernelBirth = "interrupted-birth"
+        backend.failCommit = true
+        do { try SystemProxyOwner(journal: recovered, backend: backend).apply(port: 17890, operationId: "interrupted-apply"); fatalError("expected interrupted commit") } catch { }
+        let interrupted = try OwnershipJournal(directory: directory)
+        precondition(interrupted.record.kernelPID == 900002 && interrupted.record.kernelBirth == "interrupted-birth")
+        backend.failCommit = false
+        try SystemProxyOwner(journal: interrupted, backend: backend).restore(expectedKernel: (900002, "interrupted-birth"))
+        precondition(backend.values["wifi"]!.isEmpty && interrupted.record.changes.isEmpty)
         print("PASS: ownership/PAC/foreign mutation/commit retry/missing service with injected preferences")
     }
 }
