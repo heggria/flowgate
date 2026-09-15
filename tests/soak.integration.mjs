@@ -4,11 +4,14 @@ import { createServer } from "node:http";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdir, mkdtemp, writeFile, readFile } from "node:fs/promises";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { resolve, join, dirname } from "node:path";
 import { isolateProxyPort } from "./proxy-fixture.mjs";
 import { verifyArtifacts } from "../scripts/artifacts.mjs";
-import { explainCoordinatedRestart } from "./fixtures/soak-observation.ts";
+import {
+  explainCoordinatedRestart,
+  readSoakStopRequest,
+} from "./fixtures/soak-observation.ts";
 
 const seconds = Number(process.env.FLOWGATE_SOAK_SECONDS ?? 1800);
 assert.ok(
@@ -43,6 +46,7 @@ const origin = createServer((_req, res) => {
 });
 await new Promise((r) => origin.listen(0, "127.0.0.1", r));
 const result = {
+  runId: randomUUID(),
   at: new Date().toISOString(),
   commit: build.commit,
   dirty: build.dirty,
@@ -145,6 +149,15 @@ try {
   };
   started = Date.now();
   while (Date.now() - started < seconds * 1000 && !interrupted) {
+    const stopReason = await readSoakStopRequest(
+      output + ".stop.json",
+      result.runId,
+    );
+    if (stopReason !== undefined) {
+      interrupted = true;
+      result.stopReason = stopReason;
+      break;
+    }
     const round = result.samples.length;
     assert.equal(
       await app.evaluate(({ BrowserWindow }) =>
@@ -217,6 +230,7 @@ try {
       output + ".progress.json",
       JSON.stringify(
         {
+          runId: result.runId,
           commit: build.commit,
           elapsedSeconds: result.samples.at(-1).seconds,
           samples: result.samples.length,
@@ -278,6 +292,7 @@ try {
         })),
     };
 } finally {
+  result.interrupted = interrupted;
   if (started)
     result.elapsedSeconds = Math.round((Date.now() - started) / 1000);
   result.finishedAt = new Date().toISOString();

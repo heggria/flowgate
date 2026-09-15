@@ -87,6 +87,16 @@ Service 现在用精确 operationId/revision 对应的已应用连接判断系�
 
 该采集修复与未应用模式让出修复仍需后续提交的真实 CI 验收。现有 CI818 包不包含它们。
 
+## 修复后的真实结果与当前候选
+
+`1b635cb27edfa1b4f789ddf20d2918c591380071` 的 [push 检查](https://github.com/heggria/flowgate/actions/runs/34959861725) 与 [PR 检查](https://github.com/heggria/flowgate/actions/runs/34959865044) 均完整通过。分支精确提交共 16 个真实特权场景：新增真实路由添加后自动重连、旧内核退出和真实转发；删除路由时保留未应用配置；随后第三方接管时自动停止已应用系统代理、保留手动模式修改及第三方 HTTP 设置。最后卸载和网络恢复通过，证据为 `work/readiness/ci1b-privileged-result.json`。
+
+实际 CI 包（构建 101）已下载并验证三项校验和、源码归档、包内清单、签名一致性、隐藏启动和真实本地转发。最初代理路径握手超时、系统路径超时均保留为失败；另一路隔离代理下载成功，原用户数据与系统网络前后不变。证据为 `ci1b-archive-check.json`、`ci1b-local-package-result.json` 和 `ci1b-alternate-download-result.json`。
+
+因候选网络逻辑已改变，旧 CI818 长测被主动中断，未算通过。Playwright 截获 SIGINT 并以 130 退出，没有写出最终长测 JSON；旧候选进程已确认全部退出，进度与中断决定保存在 `ci818-soak-interrupted-summary.json`、`ci818-soak-stop-decision.json`。没有最终网络快照，不能将这次中断写成完整恢复验收。
+
+长测新增按运行编号匹配的协作式停止请求，通过正常断开、关闭和最终报告流程退出；旧请求不会停止新运行。实际构建 101 的 20 秒正常完成与中途停止均已验证，停止报告标记未完成且原内核退出、网络前后不变；结果为 `work/readiness/soak-control-local-result.json`。CI 增加这一控制流程验证，仍不代表八小时测试通过。
+
 ## 仍未完成
 
 完整 TUN 与 VPN 共存矩阵、外部 IPv6、真实睡眠和切网、日常长稳、正式 Apple 签名/公证以及完整应用更新仍待补齐。持续标准见 [RELEASE_READINESS.md](RELEASE_READINESS.md)，动态进度见 `work/STATE.md`。

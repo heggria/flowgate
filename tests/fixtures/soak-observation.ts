@@ -1,5 +1,21 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import type { AppSnapshot } from "../../packages/contracts/src/index";
+
+export async function readSoakStopRequest(path: string, runId: string) {
+  let content: string;
+  try {
+    content = await readFile(path, "utf8");
+  } catch (error: any) {
+    if (error.code === "ENOENT") return undefined;
+    throw error;
+  }
+  const request = JSON.parse(content);
+  if (request?.runId !== runId) return undefined;
+  return typeof request.reason === "string"
+    ? request.reason.slice(0, 300)
+    : "Requested stop";
+}
 
 /** A PID change is admissible only when a new, completed Service operation explains it. */
 export function explainCoordinatedRestart(

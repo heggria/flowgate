@@ -1,7 +1,35 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import type { AppSnapshot } from "../packages/contracts/src/index";
-import { explainCoordinatedRestart } from "./fixtures/soak-observation";
+import {
+  explainCoordinatedRestart,
+  readSoakStopRequest,
+} from "./fixtures/soak-observation";
+
+test("cooperative stop requests belong to one run and stale requests are ignored", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "flowgate-soak-stop-"));
+  const path = join(directory, "stop.json");
+  try {
+    assert.equal(await readSoakStopRequest(path, "current"), undefined);
+    await writeFile(path, JSON.stringify({ runId: "old", reason: "stale" }));
+    assert.equal(await readSoakStopRequest(path, "current"), undefined);
+    await writeFile(
+      path,
+      JSON.stringify({ runId: "current", reason: "candidate superseded" }),
+    );
+    assert.equal(
+      await readSoakStopRequest(path, "current"),
+      "candidate superseded",
+    );
+    await writeFile(path, "{");
+    await assert.rejects(readSoakStopRequest(path, "current"));
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 function observations() {
   const previous = {

@@ -67,6 +67,8 @@ jobs:
         run: node scripts/package-macos.mjs
       - name: Verify the packaged application in the background
         run: node tests/package.integration.mjs
+      - name: Verify sustained-test completion and cooperative cleanup
+        run: node tests/soak-control.integration.mjs
       - name: Verify real privileged recovery on the isolated runner
         env:
           FLOWGATE_PRIVILEGED_CI: "1"
