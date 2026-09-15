@@ -23,7 +23,8 @@
     "test:ui-design": "npm run build && node tests/ui-design.integration.mjs",
     "test:infrastructure": "node --test tests/infrastructure.test.mjs",
     "audit:dependencies": "node scripts/audit-dependencies.mjs",
-    "test:package": "node tests/package.integration.mjs"
+    "test:package": "node tests/package.integration.mjs",
+    "test:soak": "node tests/soak.integration.mjs"
   },
   "devDependencies": {
     "@electron/notarize": "^3.1.1",

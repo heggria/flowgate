@@ -11,6 +11,8 @@ Stable shell imports contracts and release verification, never business implemen
 
 npm run typecheck; npm test; npm run build; npm run test:e2e. Tests use isolated data and never change global routes/DNS/proxy settings. Real packet forwarding is a separate acceptance check. Never claim simulated connectivity as actual.
 
+The explicit `privileged-ci.integration.ts` acceptance step is restricted to ephemeral GitHub-hosted macOS runners, refuses any existing helper installation and always attempts production uninstall/restoration. It may change that disposable runner's proxy settings and scoped test route. Never enable it on the user's Mac; ordinary local tests retain the no-global-changes rule.
+
 ## Safety and continuity
 
 All isolated Electron tests (FLOWGATE_TEST_DATA) run hidden and non-focusable by default. Never use native UI activation for automated tests. FLOWGATE_TEST_VISIBLE=1 is an explicit manual debugging opt-in only; do not set it during routine verification. Preserve this behavior for window recreation, reloads and recovery.

@@ -8,6 +8,8 @@
 
 完整入口 `npm run verify` 使用隔离数据、本地协议服务器和测试证书，不修改系统路由、DNS 或代理。
 
+工作流另有显式的隔离特权验收步骤 `tests/privileged-ci.integration.ts`，仅允许临时 GitHub-hosted macOS 机器执行，使用生产安装器和真实系统设置/进程，不在用户 Mac 上自动运行。它的当前结果以具体 CI 提交为准；不能把脚本已添加当作验收已通过。范围与边界见 RELEASE_READINESS.md。
+
 - 类型与 AST 依赖边界、单写事务/幂等/排空、持久交接、unknown 原生结果核对、写锁恢复。
 - 插件依赖、原子贡献、内核适配生命周期、统一实例追踪、任务检查点、并发存储与有界清理。
 - HTTP/SOCKS 入站，SOCKS、Shadowsocks、VMess、VLESS、Trojan、Hysteria2、TUIC 的实际本地 TCP、IPv6、DNS、UDP 矩阵。

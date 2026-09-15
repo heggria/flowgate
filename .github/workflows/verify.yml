@@ -67,6 +67,10 @@ jobs:
         run: node scripts/package-macos.mjs
       - name: Verify the packaged application in the background
         run: node tests/package.integration.mjs
+      - name: Verify real privileged recovery on the isolated runner
+        env:
+          FLOWGATE_PRIVILEGED_CI: "1"
+        run: npx tsx tests/privileged-ci.integration.ts
       - name: Archive development artifacts
         run: node scripts/archive-package.mjs
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
