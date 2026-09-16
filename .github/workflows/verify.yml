@@ -27,7 +27,7 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: node scripts/check-boundaries.mjs
-      - run: node --test tests/infrastructure.test.mjs tests/tuf-cli.test.mjs
+      - run: node --test tests/infrastructure.test.mjs tests/tuf-cli.test.mjs tests/application-feed.test.mjs
       - name: Check changed-file formatting
         env:
           EVENT_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
@@ -67,10 +67,14 @@ jobs:
         run: node scripts/package-macos.mjs
       - name: Verify the packaged application in the background
         run: node tests/package.integration.mjs
+      - name: Verify sustained-test completion and cooperative cleanup
+        run: node tests/soak-control.integration.mjs
+      - name: Verify real privileged recovery on the isolated runner
+        env:
+          FLOWGATE_PRIVILEGED_CI: "1"
+        run: npx tsx tests/privileged-ci.integration.ts
       - name: Archive development artifacts
-        run: |
-          node scripts/archive-package.mjs
-          git archive --format=tar.gz --output=work/artifacts/FlowGate-source.tar.gz HEAD
+        run: node scripts/archive-package.mjs
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: development-package
@@ -86,5 +90,6 @@ jobs:
             work/*.png
             work/traces/*
             work/diagnostics/*
+            work/privileged-ci/*.log
           if-no-files-found: ignore
           retention-days: 14

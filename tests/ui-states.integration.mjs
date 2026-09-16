@@ -142,9 +142,9 @@ try {
       .waitFor();
     await scan("update-error-" + theme);
     assert.equal(
-      await p.getByRole("button", { name: "关闭错误" }).count(),
+      await p.locator(".alert-error").count(),
       0,
-      "update failure stays local",
+      "update failure does not add a page banner",
     );
     await p.evaluate(() => {
       delete uiFixture.outcomes["release.check"];

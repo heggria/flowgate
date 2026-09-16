@@ -8,7 +8,7 @@ import {
 } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { execFileSync } from "node:child_process";
-import { verifyArtifacts } from "./artifacts.mjs";
+import { verifyArtifacts, sealSignedArtifacts } from "./artifacts.mjs";
 if (process.platform !== "darwin" || process.arch !== "arm64")
   throw new Error("macOS arm64 required");
 const packageMetadata = JSON.parse(await readFile("package.json", "utf8"));
@@ -108,6 +108,10 @@ if (identity) {
     [join(resources, "app/dist/flowgate-bridge"), "com.flowgate.bridge"],
     [join(contents, "MacOS/flowgate-helper"), "com.flowgate.helper"],
     [join(resources, "app/dist/flowgate-helper"), "com.flowgate.helper"],
+    [
+      join(resources, "app/dist/flowgate-local-installer"),
+      "com.flowgate.local-installer",
+    ],
   ];
   for (const [path, id] of nativeBinaries)
     execFileSync("/usr/bin/codesign", [
@@ -121,6 +125,7 @@ if (identity) {
       id,
       path,
     ]);
+  await sealSignedArtifacts(join(resources, "app/dist"), buildMetadata);
   const { sign } = await import("@electron/osx-sign");
   await sign({
     app: output,
@@ -149,6 +154,7 @@ if (identity) {
     output,
   ]);
 execFileSync("/usr/bin/codesign", ["--verify", "--deep", "--strict", output]);
+await verifyArtifacts(join(resources, "app/dist"));
 for (const [key, expected] of Object.entries({
   CFBundleShortVersionString: packageMetadata.version,
   CFBundleVersion: buildNumber,

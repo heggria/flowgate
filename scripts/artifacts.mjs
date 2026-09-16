@@ -66,3 +66,39 @@ export async function sealArtifacts(directory, metadata) {
   );
   return verifyArtifacts(directory);
 }
+
+// Signing may change only the native executables. Retain their source hashes
+// while sealing the bytes that will actually be shipped inside the signed app.
+export async function sealSignedArtifacts(directory, sourceManifest) {
+  const files = await inventory(directory);
+  const native = new Set([
+    "sing-box",
+    "flowgate-bridge",
+    "flowgate-helper",
+    "flowgate-local-installer",
+  ]);
+  if (
+    JSON.stringify(Object.keys(files)) !==
+    JSON.stringify(Object.keys(sourceManifest.files))
+  )
+    throw new Error("Signing changed the build inventory file set");
+  for (const [name, expected] of Object.entries(sourceManifest.files)) {
+    if (
+      !native.has(name) &&
+      JSON.stringify(files[name]) !== JSON.stringify(expected)
+    )
+      throw new Error(`Signing changed a non-native build artifact: ${name}`);
+  }
+  const { files: sourceFiles, ...metadata } = sourceManifest;
+  return sealArtifacts(directory, {
+    ...metadata,
+    signingSource: {
+      manifestSHA256: createHash("sha256")
+        .update(JSON.stringify(sourceManifest))
+        .digest("hex"),
+      nativeFiles: Object.fromEntries(
+        [...native].map((name) => [name, sourceFiles[name]]),
+      ),
+    },
+  });
+}

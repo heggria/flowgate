@@ -487,7 +487,19 @@ export function Nodes({
                     <ConfirmAction
                       label="移除"
                       title={`移除节点「${n.name}」？`}
-                      description="该节点及引用它的分流规则会移除。如果它是当前出口，配置将回到直连；运行中的连接在应用配置后改变。"
+                      description={
+                        "该节点及引用它的分流规则会移除。如果它是当前出口，配置将回到直连；运行中的连接在应用配置后改变。" +
+                        (config.groups?.some((group) =>
+                          group.members.includes(n.id),
+                        )
+                          ? "策略组会移除此成员，并在需要时选用剩余首个成员；不能移除组内最后一个成员。"
+                          : "") +
+                        (config.ruleSources?.some(
+                          (source) => source.outbound === n.id,
+                        )
+                          ? "请先在分流规则中移除引用它的规则集来源。"
+                          : "")
+                      }
                       onConfirm={() => mutation("node.remove", { id: n.id })}
                     />
                   </ActionMenu>

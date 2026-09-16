@@ -27,6 +27,12 @@ contextBridge.exposeInMainWorld("shell", {
     ipcRenderer.on("shell:navigate", handler);
     return () => ipcRenderer.removeListener("shell:navigate", handler);
   },
+  onApplicationUpdate: (listener: (value: unknown) => void) => {
+    const handler = (_event: unknown, value: unknown) => listener(value);
+    ipcRenderer.on("shell:application-update", handler);
+    return () =>
+      ipcRenderer.removeListener("shell:application-update", handler);
+  },
   onAppearance: (listener: (value: unknown) => void) => {
     const handler = (_event: unknown, value: unknown) => listener(value);
     ipcRenderer.on("shell:appearance", handler);

@@ -1,4 +1,5 @@
 import { manageLocalHelper } from "../../packages/shell/src/local-helper";
+import { RECOVERY_DISCONNECT_OPERATION_ID } from "../../packages/contracts/src/index";
 import {
   readAppearance,
   setAppearance,
@@ -12,7 +13,14 @@ import { UpdateTrace } from "../../packages/shell/src/update-trace";
 import { randomUUID } from "node:crypto";
 import { supervisedVerification } from "../../packages/release/src/verification";
 import { DraftStore } from "../../packages/shell/src/drafts";
-import { app, ipcMain, powerMonitor, safeStorage, net } from "electron";
+import {
+  app,
+  autoUpdater,
+  ipcMain,
+  powerMonitor,
+  safeStorage,
+  net,
+} from "electron";
 import { join } from "node:path";
 import { mkdir, readFile, unlink } from "node:fs/promises";
 import { ProcessSupervisor } from "../../packages/shell/src/supervisor";
@@ -423,7 +431,14 @@ else {
             rootPath: join(__dirname, "trusted-root.json"),
           };
       } catch {}
-      const applicationUpdate = new ApplicationUpdate(applicationFeed);
+      const applicationUpdate = new ApplicationUpdate(applicationFeed, {
+        updater: autoUpdater,
+        isPackaged: () => app.isPackaged,
+        onChange: (state) => {
+          if (shell.window && !shell.window.isDestroyed())
+            shell.window.webContents.send("shell:application-update", state);
+        },
+      });
       releases = new ReleaseManager(
         join(data, "releases"),
         updateConfig,
@@ -681,7 +696,7 @@ else {
         if (input?.method === "recovery.status")
           return { message: recoveryMessage };
         if (input?.method === "recovery.disconnect") {
-          await native.stop("recovery-disconnect");
+          await native.stop(RECOVERY_DISCONNECT_OPERATION_ID);
           return native.status();
         }
         if (
@@ -790,6 +805,7 @@ else {
         if (input.method === "release.status")
           return {
             ...releases.state,
+            application: applicationUpdate.state,
             updating,
             suspended,
             events: updateTrace.snapshot(),

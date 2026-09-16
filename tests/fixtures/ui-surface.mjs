@@ -282,6 +282,12 @@ export async function createUISurface() {
      version: "0.2.0",
      platform: "darwin",
      request,
+     onApplicationUpdate(listener) {
+       fixture.applicationListener = listener;
+       return () => {
+         fixture.applicationListener = undefined;
+       };
+     },
      onNavigate() {
        return () => {};
      },
