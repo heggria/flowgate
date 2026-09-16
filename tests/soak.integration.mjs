@@ -12,6 +12,11 @@ import {
   explainCoordinatedRestart,
   readSoakStopRequest,
 } from "./fixtures/soak-observation.ts";
+import {
+  captureSoakProcess,
+  closeSoakApp,
+  within,
+} from "./fixtures/soak-cleanup.mjs";
 
 const seconds = Number(process.env.FLOWGATE_SOAK_SECONDS ?? 1800);
 assert.ok(
@@ -39,6 +44,11 @@ const observe = async () => ({
   route: (await exec("/sbin/route", ["-n", "get", "default"])).stdout,
 });
 const before = await observe();
+await writeFile(
+  join(data, "soak-network-observations.json"),
+  JSON.stringify({ before }),
+  { mode: 0o600 },
+);
 let served = 0;
 const origin = createServer((_req, res) => {
   served++;
@@ -64,6 +74,9 @@ const result = {
         new URL("./fixtures/soak-observation.ts", import.meta.url),
       ),
     )
+    .update(
+      await readFile(new URL("./fixtures/soak-cleanup.mjs", import.meta.url)),
+    )
     .digest("hex"),
   requestedSeconds: seconds,
   scope:
@@ -72,8 +85,10 @@ const result = {
   cycles: 0,
   reloads: 0,
   coordinatedRestarts: [],
+  lifecycle: [],
 };
 let app,
+  ownedProcess,
   page,
   currentPID,
   previousState,
@@ -103,7 +118,20 @@ try {
       FLOWGATE_TEST_VISIBLE: "0",
     },
   });
+  ownedProcess = await captureSoakProcess(
+    app,
+    data,
+    join(bundle, "Contents/MacOS/FlowGate"),
+  );
+  const record = (event) => {
+    if (result.lifecycle.length < 20)
+      result.lifecycle.push({ at: new Date().toISOString(), event });
+  };
+  app.on("close", () => record("automation-app-close"));
+  ownedProcess.child.once("exit", () => record("application-process-exit"));
   page = await app.firstWindow();
+  page.on("close", () => record("automation-page-close"));
+  page.on("crash", () => record("renderer-crash"));
   await page
     .getByRole("heading", { name: "概览", exact: true })
     .waitFor({ timeout: 30000 });
@@ -243,6 +271,12 @@ try {
         2,
       ),
     );
+    if (round === 0 && process.env.FLOWGATE_SOAK_TEST_DISCONNECT === "1") {
+      // Regression fixture only: drop Chromium's automation transport while the
+      // real isolated application and kernel remain alive. This is not sleep.
+      result.injectedTransportDisconnect = true;
+      app._connection.toImpl(app)._browserContext._browser._connection.close();
+    }
     await new Promise((r) =>
       setTimeout(
         r,
@@ -299,16 +333,39 @@ try {
   result.requests = served;
   try {
     if (page)
-      await page.evaluate(() =>
-        window.flowgate.request("proxy.disconnect", {}, crypto.randomUUID()),
+      await within(
+        page.evaluate(() =>
+          window.flowgate.request("proxy.disconnect", {}, crypto.randomUUID()),
+        ),
+        5000,
       );
   } catch {}
-  await app?.close();
+  result.cleanup = await closeSoakApp(app, ownedProcess).catch((error) => ({
+    processExited: false,
+    graceful: false,
+    error: String(error.message).slice(0, 300),
+  }));
+  if (!result.cleanup.processExited || !result.cleanup.graceful)
+    result.passed = false;
   origin.closeAllConnections();
   await new Promise((r) => origin.close(r));
-  result.networkUnchanged =
-    JSON.stringify(before) === JSON.stringify(await observe());
+  try {
+    const after = await observe();
+    result.networkChangedFields = Object.keys(before).filter(
+      (key) => before[key] !== after[key],
+    );
+    result.networkUnchanged = result.networkChangedFields.length === 0;
+    await writeFile(
+      join(data, "soak-network-observations.json"),
+      JSON.stringify({ before, after }),
+      { mode: 0o600 },
+    );
+  } catch (error) {
+    result.networkUnchanged = false;
+    result.networkObservationError = String(error.message).slice(0, 300);
+  }
   if (!result.networkUnchanged) result.passed = false;
+  result.cleanupFinishedAt = new Date().toISOString();
   await writeFile(output, JSON.stringify(result, null, 2));
   process.removeListener("SIGTERM", interrupt);
   process.removeListener("SIGINT", interrupt);

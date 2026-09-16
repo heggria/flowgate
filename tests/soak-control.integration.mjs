@@ -25,11 +25,10 @@ async function within(promise, milliseconds) {
   }
 }
 try {
-  for (const cancel of [false, true]) {
-    const output = join(
-      directory,
-      cancel ? "cancel-result.json" : "complete-result.json",
-    );
+  for (const scenario of ["complete", "cancel", "disconnect"]) {
+    const cancel = scenario === "cancel";
+    const disconnect = scenario === "disconnect";
+    const output = join(directory, `${scenario}-result.json`);
     // A previous run's request must not stop a new invocation.
     await writeFile(
       output + ".stop.json",
@@ -41,6 +40,7 @@ try {
         ...process.env,
         FLOWGATE_SOAK_SECONDS: cancel ? "60" : "20",
         FLOWGATE_SOAK_RESULT: output,
+        FLOWGATE_SOAK_TEST_DISCONNECT: disconnect ? "1" : "0",
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -86,12 +86,17 @@ try {
       }
       const exit = await within(exited, 90000);
       assert.equal(exit.signal, null);
-      assert.equal(exit.code, cancel ? 1 : 0, diagnostic);
+      assert.equal(exit.code, cancel || disconnect ? 1 : 0, diagnostic);
       const observed = JSON.parse(await readFile(output, "utf8"));
-      assert.equal(observed.passed, !cancel);
+      assert.equal(observed.passed, !cancel && !disconnect);
       assert.equal(observed.interrupted, cancel);
       assert.equal(observed.networkUnchanged, true);
       assert.ok(observed.requests > 0);
+      assert.equal(observed.cleanup.processExited, true);
+      assert.equal(observed.cleanup.graceful, true);
+      assert.throws(() => process.kill(observed.cleanup.pid, 0), {
+        code: "ESRCH",
+      });
       if (cancel) {
         assert.equal(observed.stopReason, "control acceptance");
         assert.match(observed.error, /Soak interrupted before completion/);
@@ -99,13 +104,24 @@ try {
         const pid = observed.lastObservation.kernel.pid;
         assert.ok(Number.isInteger(pid) && pid > 0);
         assert.throws(() => process.kill(pid, 0), { code: "ESRCH" });
+      } else if (disconnect) {
+        assert.equal(observed.injectedTransportDisconnect, true);
+        assert.equal(observed.cleanup.method, "inspector-app-quit");
+        assert.match(observed.error, /closed/i);
+        assert.ok(observed.elapsedSeconds < observed.requestedSeconds);
+        assert.throws(
+          () => process.kill(observed.lastObservation.kernel.pid, 0),
+          { code: "ESRCH" },
+        );
       } else {
         assert.ok(observed.elapsedSeconds >= observed.requestedSeconds);
       }
       result.checks.push({
         case: cancel
           ? "cooperative stop"
-          : "completion with stale stop request",
+          : disconnect
+            ? "injected transport disconnect cleanup"
+            : "completion with stale stop request",
         ...observed,
       });
     } catch (error) {
