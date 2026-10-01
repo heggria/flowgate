@@ -38,7 +38,7 @@ jobs:
           fi
           node scripts/check-format.mjs "$base"
       - run: node scripts/audit-dependencies.mjs
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
           name: dependency-audit
@@ -71,13 +71,13 @@ jobs:
         run: |
           node scripts/archive-package.mjs
           git archive --format=tar.gz --output=work/artifacts/FlowGate-source.tar.gz HEAD
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: development-package
           path: work/artifacts/*
           if-no-files-found: error
           retention-days: 14
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
           name: verification-results
