@@ -207,7 +207,14 @@ export class ServiceCore {
     if (this.lifecycle !== "ready" || this.network !== state) return;
     const kernel = await this.native.status();
     const own = kernel.tunInterface;
-    if (networkPath(previous, own) === networkPath(state, own)) return;
+    const dependencies = (this.store.configuration.externalNetworks ?? []).map(
+      (network) => network.interface,
+    );
+    if (
+      networkPath(previous, own, dependencies) ===
+      networkPath(state, own, dependencies)
+    )
+      return;
     this.invalidateMeasurements();
     if (kernel.status !== "running" || this.hasUnknownNative()) return;
     const applied = this.store.appliedConnection;

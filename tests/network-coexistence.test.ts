@@ -708,3 +708,100 @@ for (const legacy of [true, false]) {
     }
   });
 }
+
+for (const mode of ["manual", "bound", "tun"] as const) {
+  test(`peer privacy rotation does not restart an unrelated ${mode} connection and real dependencies still coordinate`, async () => {
+    const directory = await mkdtemp(join(tmpdir(), "flowgate-peer-churn-"));
+    let observed: NetworkState & { platform: string } = {
+      platform: "darwin",
+      interfaces: [
+        { name: "en0", addresses: ["192.0.2.2"], cidrs: ["192.0.2.2/24"] },
+        { name: "awdl0", addresses: ["fe80::1111"], cidrs: ["fe80::1111/64"] },
+        { name: "llw0", addresses: ["fe80::1111"], cidrs: ["fe80::1111/64"] },
+        { name: "utun8", addresses: ["198.18.0.1"], cidrs: ["198.18.0.1/30"] },
+      ],
+      capturedAt: "",
+      defaultInterface: "en0",
+      defaultGateway: "192.0.2.1",
+      proxyEnabled: false,
+      dns: [],
+      routes: [],
+      warnings: [],
+      plugins: [],
+    };
+    let kernel: KernelState = { status: "stopped", systemControl: true };
+    let applies = 0,
+      stops = 0;
+    const core = new ServiceCore(
+      new StateStore(directory, 1),
+      {
+        status: async () => kernel,
+        apply: async (_c, revision, operationId) => {
+          applies++;
+          return (kernel = {
+            status: "running",
+            systemControl: true,
+            appliedRevision: revision,
+            operationId,
+            ...(mode === "tun" ? { tunInterface: "utun100" } : {}),
+          });
+        },
+        stop: async (operationId) => {
+          stops++;
+          return (kernel = {
+            status: "stopped",
+            systemControl: true,
+            operationId,
+          });
+        },
+      },
+      async (method) =>
+        method === "network.inspect" ? structuredClone(observed) : {},
+      "test",
+    );
+    try {
+      await core.start();
+      await core.request("network.refresh", {});
+      if (mode === "bound")
+        core.store.configuration.externalNetworks = [
+          {
+            id: "peer",
+            name: "peer",
+            interface: "awdl0",
+            dnsServer: "udp://192.0.2.53",
+          },
+        ];
+      if (mode === "tun") core.store.configuration.settings.mode = "tun";
+      await core.request("proxy.connect", {}, "stream-start");
+      const originalOperation = kernel.operationId;
+      for (const i of observed.interfaces.filter((i) =>
+        /^(awdl|llw)/.test(i.name),
+      )) {
+        i.addresses = ["fe80::2222"];
+        i.cidrs = ["fe80::2222/64"];
+      }
+      await core.request("network.refresh", {});
+      await core.request("network.refresh", {});
+      assert.equal(applies, mode === "bound" ? 2 : 1);
+      assert.equal(stops, 0);
+      if (mode !== "bound") assert.equal(kernel.operationId, originalOperation);
+      if (mode === "tun") {
+        observed.interfaces[3].addresses = ["172.29.0.2"];
+        observed.interfaces[3].cidrs = ["172.29.0.2/30"];
+        await core.request("network.refresh", {});
+        assert.equal(stops, 1, "new TUN overlap must yield the connection");
+      } else {
+        observed.defaultGateway = "192.0.2.254";
+        await core.request("network.refresh", {});
+        assert.equal(
+          applies,
+          mode === "bound" ? 3 : 2,
+          "real default path change must still reconnect",
+        );
+      }
+    } finally {
+      await core.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+}
