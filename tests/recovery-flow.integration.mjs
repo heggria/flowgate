@@ -1,7 +1,10 @@
 import { _electron as electron } from "playwright";
+import { waitForAsyncPredicate } from "./async-poll.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { resolve, join } from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { isolateProxyPort } from "./proxy-fixture.mjs";
 const data = await mkdtemp(resolve("work/recovery-flow-"));
 await mkdir(join(data, "business"), { mode: 0o700 });
@@ -84,6 +87,43 @@ try {
   await isolateProxyPort(page);
   await page.getByRole("button", { name: "启动代理", exact: true }).click();
   await page.getByRole("button", { name: "停止代理", exact: true }).waitFor();
+  const running = await page.evaluate(() =>
+    window.flowgate.request("snapshot"),
+  );
+  const exec = promisify(execFile);
+  const parent = Number(
+    (
+      await exec("/bin/ps", ["-p", String(running.kernel.pid), "-o", "ppid="])
+    ).stdout.trim(),
+  );
+  const command = (
+    await exec("/bin/ps", ["-p", String(parent), "-o", "command="])
+  ).stdout;
+  assert.ok(
+    command.includes("flowgate-bridge") && command.includes(data),
+    "only the isolated application's bridge may be killed",
+  );
+  process.kill(parent, "SIGKILL");
+  await waitForAsyncPredicate(() =>
+    page.evaluate(
+      async () =>
+        (await window.flowgate.request("snapshot")).kernel.status === "unknown",
+    ),
+  );
+  await page.getByRole("button", { name: "问题与恢复", exact: true }).click();
+  await page
+    .getByRole("button", { name: "断开并重新核对", exact: true })
+    .click();
+  await page
+    .getByRole("heading", { name: "暂无待处理问题", exact: true })
+    .waitFor();
+  await page.getByRole("button", { name: "启动代理", exact: true }).click();
+  await page.getByRole("button", { name: "停止代理", exact: true }).waitFor();
+  const reconnected = await page.evaluate(() =>
+    window.flowgate.request("snapshot"),
+  );
+  assert.equal(reconnected.kernel.status, "running");
+  assert.notEqual(reconnected.kernel.pid, running.kernel.pid);
   await page.getByRole("button", { name: "停止代理", exact: true }).click();
   console.log(
     "PASS actual Service/native/UI: unknown result fences connect; explicit disconnect reconciles durable record; reconnect succeeds without clearing user data",

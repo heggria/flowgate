@@ -55,13 +55,28 @@ try {
   await assert.rejects(() =>
     native.apply(compileConfiguration(config), 3, "must-reject"),
   );
-  await wait(() => !alive(second.pid!));
+  const recovered = await native.recoverStop("recovery-disconnect");
+  assert.equal(recovered.status, "stopped");
+  assert.equal(recovered.operationId, "recovery-disconnect");
+  assert.equal(
+    alive(second.pid!),
+    false,
+    "recovery must account for the old kernel before returning stopped",
+  );
   const bound = createServer();
   await new Promise<void>((resolve, reject) => {
     bound.once("error", reject);
     bound.listen(port, "127.0.0.1", resolve);
   });
   await new Promise<void>((r) => bound.close(() => r()));
+  const third = await native.apply(
+    compileConfiguration(config),
+    3,
+    "user-reconnect",
+  );
+  assert.equal(third.status, "running");
+  assert.notEqual(third.pid, second.pid);
+  await native.stop("finish-recovery-test");
   await writeFile(
     join("work", "native-faults-result.json"),
     JSON.stringify(
@@ -74,6 +89,8 @@ try {
           "bridge SIGKILL reports unknown and rejects writes",
           "independent watchdog terminates orphan kernel",
           "owned port released",
+          "explicit recovery rebuilds the bridge and confirms old kernel exit",
+          "user reconnect succeeds after bridge recovery",
         ],
         scope: "manual mode only; no global network changes",
       },

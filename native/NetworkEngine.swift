@@ -22,14 +22,22 @@ final class NetworkEngine {
         journal = try OwnershipJournal(directory: directory); proxies = SystemProxyOwner(journal: journal)
         if privileged {
             try proxies.restore()
-            if let pid=journal.record.kernelPID, let birth=journal.record.kernelBirth, processBirth(pid)==birth {
-                kill(pid,SIGTERM)
-                let deadline=Date().addingTimeInterval(3)
-                while processBirth(pid)==birth && Date()<deadline {Thread.sleep(forTimeInterval:0.02)}
-                if processBirth(pid)==birth {kill(pid,SIGKILL)}
-            }
-            journal.record.kernelPID=nil;journal.record.kernelBirth=nil;try journal.persist()
         }
+        // A replacement manual bridge must also account for its predecessor's
+        // kernel. Do not publish stopped merely because this Process is new.
+        if let pid=journal.record.kernelPID, let birth=journal.record.kernelBirth, processBirth(pid)==birth {
+            guard pid > 1, pid != getpid() else { throw NSError(domain: "旧内核身份无效，拒绝恢复", code: 42) }
+            kill(pid,SIGTERM)
+            let deadline=Date().addingTimeInterval(3)
+            while processBirth(pid)==birth && Date()<deadline {Thread.sleep(forTimeInterval:0.02)}
+            if processBirth(pid)==birth {
+                kill(pid,SIGKILL)
+                let forcedDeadline=Date().addingTimeInterval(2)
+                while processBirth(pid)==birth && Date()<forcedDeadline {Thread.sleep(forTimeInterval:0.02)}
+            }
+            guard processBirth(pid) != birth else { throw NSError(domain: "旧内核尚未退出，恢复结果未知", code: 43) }
+        }
+        journal.record.kernelPID=nil;journal.record.kernelBirth=nil;try journal.persist()
     }
     func reconcile() {
         if recoveryPending {

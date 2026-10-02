@@ -1,5 +1,6 @@
 import { openNodeImport, openRuleEditor } from "./ui-fixtures.mjs";
 import { isolateProxyPort } from "./proxy-fixture.mjs";
+import { waitForAsyncPredicate } from "./async-poll.mjs";
 import { createServer } from "node:http";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -93,15 +94,15 @@ try {
     return true;
   });
   assert.equal(killed, true, "Service process identifiable");
-  await page.waitForFunction(
-    async (epoch) => {
-      try {
-        return (await window.flowgate.request("snapshot")).epoch !== epoch;
-      } catch {
-        return false;
-      }
-    },
-    before.epoch,
+  await waitForAsyncPredicate(
+    () =>
+      page.evaluate(async (epoch) => {
+        try {
+          return (await window.flowgate.request("snapshot")).epoch !== epoch;
+        } catch {
+          return false;
+        }
+      }, before.epoch),
     { timeout: 15000 },
   );
   const recovered = await page.evaluate(() =>
@@ -113,8 +114,11 @@ try {
     window.flowgate.request("proxy.disconnect", {}, crypto.randomUUID()),
   );
   await page.getByRole("button", { name: "刷新状态", exact: false }).click();
-  await page.waitForFunction(
-    async () => !!(await window.flowgate.request("snapshot")).network,
+  await waitForAsyncPredicate(
+    () =>
+      page.evaluate(
+        async () => !!(await window.flowgate.request("snapshot")).network,
+      ),
     { timeout: 25000 },
   );
   assert.deepEqual(

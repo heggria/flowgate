@@ -17,7 +17,7 @@ final class SessionLease {
         return owner == generation && !cleaning
     }
     func beginCleanup(_ generation: UInt64) -> Bool {
-        guard owner == generation else { return false }
+        guard owner == generation && !cleaning else { return false }
         cleaning = true
         return true
     }
@@ -28,5 +28,47 @@ final class SessionLease {
         owner = nil
         cleaning = false
         return true
+    }
+}
+
+// One recovery chain per generation. Like SessionLease, all calls and scheduled
+// retries must execute on the helper's serial writer queue. A failed restore
+// keeps admission fenced indefinitely, with exponential backoff capped at 30s.
+final class SessionCleanup {
+    typealias Scheduler = (TimeInterval, @escaping () -> Void) -> Void
+    private final class RetryTicket {}
+    private let lease: SessionLease
+    private let generation: UInt64
+    private var pendingRetry: RetryTicket?
+    private var nextDelay: TimeInterval = 1
+
+    init(lease: SessionLease, generation: UInt64) {
+        self.lease = lease
+        self.generation = generation
+    }
+
+    func start(restore: @escaping () throws -> Void, schedule: @escaping Scheduler,
+               failed: @escaping () -> Void, completed: @escaping () -> Void) {
+        guard lease.beginCleanup(generation) else { return }
+        attempt(restore: restore, schedule: schedule, failed: failed, completed: completed)
+    }
+
+    private func attempt(restore: @escaping () throws -> Void, schedule: @escaping Scheduler,
+                         failed: @escaping () -> Void, completed: @escaping () -> Void) {
+        do {
+            if try lease.cleanup(generation, restore: restore) { completed() }
+        } catch {
+            failed()
+            let ticket = RetryTicket()
+            pendingRetry = ticket
+            let delay = nextDelay
+            nextDelay = min(nextDelay * 2, 30)
+            schedule(delay) {
+                // Even a duplicated/late callback cannot fork a retry chain.
+                guard self.pendingRetry === ticket else { return }
+                self.pendingRetry = nil
+                self.attempt(restore: restore, schedule: schedule, failed: failed, completed: completed)
+            }
+        }
     }
 }

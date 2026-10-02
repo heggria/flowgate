@@ -11,6 +11,12 @@ test("actionable categories separate packaging, signature, approval and unknown 
     ["HELPER_UNSIGNED 未签名", "HELPER_UNSIGNED", "settings"],
     ["HELPER_APPROVAL 等待系统批准", "HELPER_APPROVAL", "settings"],
     ["辅助服务会话失联，系统状态未知", "STATE_UNKNOWN", "network"],
+    ["原生桥接失联；禁止新写入", "STATE_UNKNOWN", "network"],
+    [
+      "原生桥接已重建；请完成紧急断开以核实旧连接恢复",
+      "STATE_UNKNOWN",
+      "network",
+    ],
     ["EADDRINUSE address already in use", "PORT_IN_USE", "settings"],
     ["订阅不存在", "RESOURCE", "nodes"],
     ["unexpected failure", "UNEXPECTED", "activity"],

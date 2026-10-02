@@ -696,8 +696,7 @@ else {
         if (input?.method === "recovery.status")
           return { message: recoveryMessage };
         if (input?.method === "recovery.disconnect") {
-          await native.stop(RECOVERY_DISCONNECT_OPERATION_ID);
-          return native.status();
+          return native.recoverStop(RECOVERY_DISCONNECT_OPERATION_ID);
         }
         if (
           input?.method === "recovery.restore" &&

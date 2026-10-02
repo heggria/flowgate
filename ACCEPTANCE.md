@@ -1,6 +1,6 @@
 # 验收状态
 
-最新证据见 [2026-09-15 持续发布准备](READINESS_2026-09-15.md)，此前复核见 [第二轮完整复核](REVIEW_2026-09-15.md)，持续发布标准见 [RELEASE_READINESS.md](RELEASE_READINESS.md)。下文各日期历史证据不能直接用于证明当前构建。0.3.2 已支持管理员批准的免费本机辅助服务，使用方式见 [LOCAL_DEVELOPMENT.md](LOCAL_DEVELOPMENT.md)。证书延期仅适用于 Apple 签名正式分发；本机特权能力及剩余实测边界以最新复核为准。
+当前 0.3.3 候选的收敛范围、必需检查与发布条件见 [2026-10-02 收敛候选](READINESS_2026-10-02.md)。历史证据见 [2026-09-15 持续发布准备](READINESS_2026-09-15.md)、[第二轮完整复核](REVIEW_2026-09-15.md) 和 [2026-09-16 长测失败](READINESS_2026-09-16.md)，持续发布标准见 [RELEASE_READINESS.md](RELEASE_READINESS.md)。下文历史证据不能直接用于证明当前构建。0.3.2 已支持管理员批准的免费本机辅助服务，使用方式见 [LOCAL_DEVELOPMENT.md](LOCAL_DEVELOPMENT.md)。证书延期仅适用于 Apple 签名正式分发；本机特权能力及剩余实测边界以对应候选验证为准。
 
 本文件区分开发行为、真实网络、组合安装包和正式分发。原计划见 [PLAN_AUDIT.md](PLAN_AUDIT.md)，证书相关项目按用户要求延期，其他未完成项保留。
 

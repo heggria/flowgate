@@ -57,7 +57,7 @@ export function adviseFailure(value: unknown): ProblemAdvice {
       approval: true,
     };
   if (
-    /状态未知|结果未知|结果尚未明确|会话失联|unknown|ownership|所有权|恢复未完成/i.test(
+    /状态未知|结果未知|结果尚未明确|(?:会话|桥接)失联|桥接已重建|unknown|ownership|所有权|恢复未完成/i.test(
       m,
     )
   )
