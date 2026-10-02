@@ -128,8 +128,12 @@ export function validateReleaseManifest(manifest: ReleaseSet) {
     }
   }
 }
-// Only the installing client applies the current shell's compatibility and permission policy.
-export function validateRelease(manifest: ReleaseSet) {
+// Installation uses the host platform. Offline preparation selects the exact
+// verified build's platform while retaining compatibility and permission checks.
+export function validateRelease(
+  manifest: ReleaseSet,
+  platform = process.platform + "-" + process.arch,
+) {
   validateReleaseManifest(manifest);
   if (
     manifest.protocol !== 1 ||
@@ -139,10 +143,7 @@ export function validateRelease(manifest: ReleaseSet) {
     manifest.schema.max < CONFIGURATION_SCHEMA
   )
     throw new Error("版本不兼容；可能需要完整应用更新");
-  if (
-    manifest.platforms &&
-    !manifest.platforms.includes(process.platform + "-" + process.arch)
-  )
+  if (manifest.platforms && !manifest.platforms.includes(platform))
     throw new Error("版本不支持当前平台");
   const allowed = new Set([
     ...builtinExtensions.map((entry) => entry.id),

@@ -120,7 +120,7 @@ export async function prepareBusinessRelease(options) {
   );
   const manifestBytes = await readFile(manifestFile),
     manifest = JSON.parse(manifestBytes);
-  validateRelease(manifest);
+  validateRelease(manifest, buildManifest.platform + "-" + buildManifest.arch);
   assert.deepEqual(manifest.platforms, ["darwin-arm64"]);
   assert.equal(manifest.publisher, "flowgate");
   assert.deepEqual(manifest.shellApi, { min: 2, max: 2 });
