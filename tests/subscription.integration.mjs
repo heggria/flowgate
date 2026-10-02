@@ -8,6 +8,12 @@ import { promisify } from "node:util";
 import { mkdtemp, writeFile, readFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { isolateProxyPort } from "./proxy-fixture.mjs";
+import {
+  captureSoakProcess,
+  captureSoakChild,
+  closeSoakApp,
+  within,
+} from "./fixtures/soak-cleanup.mjs";
 import { openNodeImport } from "./ui-fixtures.mjs";
 
 const directory = await mkdtemp(resolve("work/subscription-e2e-"));
@@ -58,14 +64,19 @@ const source = createHTTPS(
   },
 );
 await new Promise((resolve) => source.listen(0, "127.0.0.1", resolve));
-let proxyConnections = 0;
-const origin = createServer((_request, response) =>
-  response.end("subscription-profile-egress-ok"),
-);
+let proxyConnections = 0,
+  originRequests = 0;
+const proxySockets = new Set();
+const origin = createServer((_request, response) => {
+  originRequests++;
+  response.end("subscription-profile-egress-ok");
+});
 await new Promise((resolve) => origin.listen(0, "127.0.0.1", resolve));
 const proxy = createServer();
 proxy.on("connect", (request, socket, head) => {
   proxyConnections++;
+  proxySockets.add(socket);
+  socket.on("close", () => proxySockets.delete(socket));
   const target = new URL("http://" + request.url);
   const upstream = connect(Number(target.port), target.hostname, () => {
     socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
@@ -78,14 +89,59 @@ proxy.on("connect", (request, socket, head) => {
   socket.on("close", () => upstream.destroy());
 });
 await new Promise((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+const proxyPort = proxy.address().port;
 const environment = {
   ...process.env,
+  FLOWGATE_TEST_VISIBLE: "0",
   FLOWGATE_TEST_DATA: join(directory, "data"),
   NODE_EXTRA_CA_CERTS: cert,
 };
-let app = await electron.launch({ args: ["."], env: environment });
+let app, owned;
 const checks = [];
+const result = {
+  passed: false,
+  checks,
+  cleanup: [],
+  scope:
+    "hidden isolated app; local TLS source and loopback forwarding only; no global DNS/routes/proxy changes",
+};
+async function launch() {
+  const executablePath = process.env.FLOWGATE_TEST_EXECUTABLE;
+  app = await electron.launch({
+    ...(executablePath ? { executablePath } : { args: ["."] }),
+    env: environment,
+  });
+  owned = captureSoakChild(app);
+  const actualExecutable = await within(
+    app.evaluate(() => process.execPath),
+    10000,
+    "Application executable identity deadline exceeded",
+  );
+  owned = await captureSoakProcess(
+    app,
+    environment.FLOWGATE_TEST_DATA,
+    actualExecutable,
+    { owned },
+  );
+}
+async function closeApp() {
+  const cleanup = await closeSoakApp(app, owned);
+  result.cleanup.push(cleanup);
+  app = undefined;
+  owned = undefined;
+  assert.equal(
+    cleanup.processExited,
+    true,
+    "owned application process must exit",
+  );
+  assert.equal(
+    cleanup.graceful,
+    true,
+    "forced application cleanup fails acceptance",
+  );
+}
 try {
+  await launch();
   let page = await app.firstWindow();
   page.setDefaultTimeout(15000);
   await page.getByRole("heading", { name: "概览", exact: true }).waitFor();
@@ -226,7 +282,7 @@ try {
   assert.equal(state.configuration.settings.mode, "manual");
   await request("proxy.connect", {});
   const exec = promisify(execFile);
-  const forward = async () =>
+  const forward = async (protocol = "http") =>
     (
       await exec("/usr/bin/curl", [
         "--silent",
@@ -236,26 +292,70 @@ try {
         "8",
         "--noproxy",
         "",
-        "--proxy",
-        `http://127.0.0.1:${port}`,
+        ...(protocol === "http"
+          ? ["--proxy", `http://127.0.0.1:${port}`]
+          : ["--socks5-hostname", `127.0.0.1:${port}`]),
         `http://127.0.0.1:${origin.address().port}/`,
       ])
     ).stdout;
   assert.equal(await forward(), "subscription-profile-egress-ok");
   assert.equal(proxyConnections, 1);
+  assert.equal(await forward("socks"), "subscription-profile-egress-ok");
+  assert.equal(
+    proxyConnections,
+    2,
+    "both HTTP and SOCKS listeners must use selected peer",
+  );
+  for (const socket of proxySockets) socket.destroy();
+  await within(
+    new Promise((resolve, reject) =>
+      proxy.close((error) => (error ? reject(error) : resolve())),
+    ),
+    5000,
+  );
+  const offlineOrigin = originRequests;
+  await assert.rejects(() => forward());
+  await assert.rejects(() => forward("socks"));
+  assert.equal(
+    originRequests,
+    offlineOrigin,
+    "selected peer offline must not bypass directly to origin",
+  );
+  await new Promise((resolve, reject) => {
+    proxy.once("error", reject);
+    proxy.listen(proxyPort, "127.0.0.1", resolve);
+  });
+  assert.equal(await forward(), "subscription-profile-egress-ok");
+  assert.equal(
+    proxyConnections,
+    3,
+    "same applied profile must recover after peer restart",
+  );
+  checks.push(
+    "migrated selected peer carries real HTTP/SOCKS, offline blocks direct fallback, and peer restart reconnects without apply",
+  );
   await request("group.select", {
     id: state.configuration.groups[0].id,
     member: "direct",
     revision: state.configuration.revision,
   });
+  assert.equal(await forward(), "subscription-profile-egress-ok");
+  assert.equal(
+    proxyConnections,
+    4,
+    "draft group choice must leave existing proxy egress unchanged",
+  );
   await request("proxy.connect", {});
   assert.equal(await forward(), "subscription-profile-egress-ok");
   assert.equal(
     proxyConnections,
-    1,
+    4,
     "group selection switches real egress to direct only after explicit apply",
   );
+  const appliedKernelPID = (await snapshot()).kernel.pid;
   await request("proxy.disconnect", {});
+  assert.equal((await snapshot()).kernel.status, "stopped");
+  assert.throws(() => process.kill(appliedKernelPID, 0), { code: "ESRCH" });
   const trace = await page.evaluate(() =>
     window.shell.request("diagnostics.trace"),
   );
@@ -263,8 +363,8 @@ try {
   checks.push(
     "full-profile UI migration compiles selector/IP rule; actual loopback HTTP reaches chosen proxy; changing member changes real egress after apply",
   );
-  await app.close();
-  app = await electron.launch({ args: ["."], env: environment });
+  await closeApp();
+  await launch();
   page = await app.firstWindow();
   await page.getByRole("heading", { name: "概览", exact: true }).waitFor();
   const restored = await page.evaluate(() =>
@@ -279,31 +379,56 @@ try {
     restored.configuration.subscriptions[0].metadata.total,
     1073741824,
   );
+  await request("proxy.connect", {});
+  assert.equal(await forward(), "subscription-profile-egress-ok");
+  assert.equal(await forward("socks"), "subscription-profile-egress-ok");
+  assert.equal(
+    proxyConnections,
+    4,
+    "persisted direct choice must carry real traffic without peer after app restart",
+  );
+  const restoredKernelPID = (await snapshot()).kernel.pid;
+  await request("proxy.disconnect", {});
+  assert.equal((await snapshot()).kernel.status, "stopped");
+  assert.throws(() => process.kill(restoredKernelPID, 0), { code: "ESRCH" });
   checks.push(
     "restart restores converted sources, metadata, strategy groups and selected members",
   );
+  result.passed = true;
+} catch (error) {
+  result.error = String(error.stack ?? error);
+} finally {
+  try {
+    if (app) await closeApp();
+  } catch (error) {
+    result.passed = false;
+    result.cleanupError = String(error.stack ?? error);
+  }
+  try {
+    for (const socket of proxySockets) socket.destroy();
+    await within(
+      Promise.all(
+        [source, origin, proxy].map(
+          (server) =>
+            new Promise((resolve, reject) => {
+              server.closeAllConnections?.();
+              server.close((error) => (error ? reject(error) : resolve()));
+            }),
+        ),
+      ),
+      5000,
+      "Subscription fixture cleanup deadline exceeded",
+    );
+  } catch (error) {
+    result.passed = false;
+    result.cleanupError = String(error.stack ?? error);
+  }
   await writeFile(
     "work/subscription-result.json",
-    JSON.stringify(
-      {
-        passed: true,
-        checks,
-        scope:
-          "hidden isolated app; local TLS source and loopback forwarding only; no global DNS/routes/proxy changes",
-      },
-      null,
-      2,
-    ),
+    JSON.stringify(result, null, 2),
   );
-} finally {
-  await app.close().catch(() => {});
-  await Promise.all(
-    [source, origin, proxy].map(
-      (server) =>
-        new Promise((resolve) => {
-          server.closeAllConnections?.();
-          server.close(resolve);
-        }),
-    ),
-  );
+}
+if (!result.passed) {
+  console.error(result.error ?? result.cleanupError);
+  process.exitCode = 1;
 }

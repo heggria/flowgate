@@ -211,10 +211,20 @@ export class ServiceCore {
     this.invalidateMeasurements();
     if (kernel.status !== "running" || this.hasUnknownNative()) return;
     const applied = this.store.appliedConnection;
+    // Old persisted operations may predate plannedConnection. Their recorded
+    // mode still proves a matching native connection is system-owned.
+    const appliedOperation = this.store.operations.find(
+      (o) =>
+        o.id === kernel.operationId &&
+        o.kind === "proxy.connect" &&
+        o.state === "succeeded" &&
+        o.revision === kernel.appliedRevision,
+    );
     const lostAppliedSystemProxy =
-      applied?.mode === "system" &&
-      applied.operationId === kernel.operationId &&
-      applied.revision === kernel.appliedRevision &&
+      ((applied?.mode === "system" &&
+        applied.operationId === kernel.operationId &&
+        applied.revision === kernel.appliedRevision) ||
+        appliedOperation?.nativeMode === "system") &&
       state.proxyEnabled &&
       kernel.systemProxyOwned === false;
     if (
@@ -310,11 +320,7 @@ export class ServiceCore {
         ["proxy.connect", "proxy.disconnect"].includes(o.kind) &&
         kernel.status === "stopped" &&
         kernel.operationId === RECOVERY_DISCONNECT_OPERATION_ID &&
-        (kernel.systemControl ||
-          o.nativeMode === "manual" ||
-          (o.nativeMode === undefined &&
-            o.revision === this.store.configuration.revision &&
-            this.store.configuration.settings.mode === "manual"))
+        (kernel.systemControl || o.nativeMode === "manual")
       ) {
         o.state = o.kind === "proxy.disconnect" ? "succeeded" : "failed";
         o.completedAt = new Date().toISOString();
@@ -329,10 +335,20 @@ export class ServiceCore {
         ((o.kind === "proxy.connect" &&
           kernel.status === "running" &&
           kernel.appliedRevision === o.revision) ||
-          (o.kind === "proxy.disconnect" && kernel.status === "stopped"))
+          (o.kind === "proxy.disconnect" &&
+            kernel.status === "stopped" &&
+            (kernel.systemControl || o.nativeMode === "manual")))
       ) {
         o.state = "succeeded";
         o.completedAt = new Date().toISOString();
+        if (
+          o.kind === "proxy.connect" &&
+          o.plannedConnection?.operationId === o.id &&
+          o.plannedConnection.revision === o.revision &&
+          o.plannedConnection.mode === o.nativeMode
+        ) {
+          this.store.appliedConnection = o.plannedConnection;
+        }
         changed = true;
       }
     }
@@ -534,6 +550,27 @@ export class ServiceCore {
         )
           return;
       }
+      let disconnectMode: Operation["nativeMode"];
+      if (method === "proxy.disconnect") {
+        // The last displayed summary can belong to an older connection. Only
+        // native's exact active operation/revision may establish stop authority.
+        // An unmatched source stays unknown; a manual draft proves nothing.
+        const current = await this.native.status();
+        const applied = this.store.appliedConnection;
+        disconnectMode =
+          current.operationId !== undefined &&
+          current.appliedRevision !== undefined &&
+          applied?.operationId === current.operationId &&
+          applied.revision === current.appliedRevision
+            ? applied.mode
+            : this.store.operations.find(
+                (o) =>
+                  o.id === current.operationId &&
+                  o.kind === "proxy.connect" &&
+                  o.state === "succeeded" &&
+                  o.revision === current.appliedRevision,
+              )?.nativeMode;
+      }
       const operation: Operation = {
         id: operationId,
         traceId:
@@ -543,8 +580,7 @@ export class ServiceCore {
           ? {
               nativeMode:
                 method === "proxy.disconnect"
-                  ? (this.store.appliedConnection?.mode ??
-                    this.store.configuration.settings.mode)
+                  ? disconnectMode
                   : this.store.configuration.settings.mode,
             }
           : {}),
@@ -552,6 +588,24 @@ export class ServiceCore {
         revision: this.store.configuration.revision,
         startedAt: new Date().toISOString(),
       };
+      if (method === "proxy.connect") {
+        const c = this.store.configuration,
+          id = c.settings.selectedNode;
+        operation.plannedConnection = {
+          revision: c.revision,
+          operationId,
+          selectedNode: id,
+          outletName:
+            c.nodes.find((n) => n.id === id)?.name ??
+            c.groups?.find((g) => g.id === id)?.name ??
+            c.externalNetworks?.find((n) => n.id === id)?.name ??
+            (id === "direct" ? "直连" : id),
+          mode: c.settings.mode,
+          listenPort: c.settings.listenPort,
+          finalOutbound: c.settings.finalOutbound,
+          ruleCount: c.rules.length,
+        };
+      }
       operation.context = {
         ...requestTrace.getStore(),
         operationId: operation.id,
@@ -640,22 +694,7 @@ export class ServiceCore {
             operationId,
             this.store.configuration.settings.mode,
           );
-          const c = this.store.configuration,
-            id = c.settings.selectedNode;
-          this.store.appliedConnection = {
-            revision: c.revision,
-            operationId,
-            selectedNode: id,
-            outletName:
-              c.nodes.find((n) => n.id === id)?.name ??
-              c.groups?.find((g) => g.id === id)?.name ??
-              c.externalNetworks?.find((n) => n.id === id)?.name ??
-              (id === "direct" ? "直连" : id),
-            mode: c.settings.mode,
-            listenPort: c.settings.listenPort,
-            finalOutbound: c.settings.finalOutbound,
-            ruleCount: c.rules.length,
-          };
+          this.store.appliedConnection = operation.plannedConnection;
         } else if (method === "proxy.disconnect") {
           this.invalidateMeasurements();
           await this.native.stop(operationId);
@@ -952,12 +991,16 @@ export class ServiceCore {
   async resume() {
     await this.store.drain();
     await this.reconcileNative();
-    this.networkObserver.resume();
-    await this.networkObserver.refresh().catch(() => {});
     this.subscriptions.resume();
     this.store.resume();
     this.native.resume();
     this.lifecycle = "ready";
+    // Publish the fresh path only after serialized connection writes can run.
+    // Otherwise the first post-sleep transition becomes the baseline while
+    // coordinateNetwork is fenced, and unchanged polls can never recover it.
+    this.networkObserver.resume();
+    await this.networkObserver.refresh().catch(() => {});
+    await this.networkCoordination;
     this.subscriptionRefresh.start();
   }
   async resolveEgress(target: string) {

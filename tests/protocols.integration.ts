@@ -1,3 +1,5 @@
+import { cleanupStages, stopOwnedChild } from "./fixtures/owned-cleanup.mjs";
+import { within } from "./fixtures/soak-cleanup.mjs";
 import { parseSubscriptionDocument } from "../packages/extensions/src/subscriptions/index";
 import { requestHttpEgress } from "../packages/runtime/src/egress";
 import { createServer as createHTTPS } from "node:https";
@@ -17,6 +19,7 @@ import {
 } from "../packages/domain/src/configuration";
 import type { NodeConfig } from "../packages/contracts/src/index";
 const exec = promisify(execFile);
+const nativeBuild = resolve(process.env.FLOWGATE_NATIVE_BUILD_DIR ?? "dist");
 const directory = await mkdtemp(resolve("work/protocols-"));
 let originRequests = 0;
 const origin = createServer((_req, response) => {
@@ -26,9 +29,11 @@ const origin = createServer((_req, response) => {
 await new Promise<void>((r) => origin.listen(0, "::", r));
 const originPort = (origin.address() as any).port;
 const echo = createSocket("udp4");
-echo.on("message", (message, remote) =>
-  echo.send(message, remote.port, remote.address),
-);
+let echoRequests = 0;
+echo.on("message", (message, remote) => {
+  echoRequests++;
+  echo.send(message, remote.port, remote.address);
+});
 await new Promise<void>((r) => echo.bind(0, "127.0.0.1", r));
 const dns = createSocket("udp4");
 let dnsQueries = 0;
@@ -175,19 +180,32 @@ await writeFile(
     route: { default_domain_resolver: "local", final: "direct" },
   }),
 );
-await exec(resolve("dist/sing-box"), ["check", "-c", serverPath]);
-let server = spawn(resolve("dist/sing-box"), ["run", "-c", serverPath], {
+await exec(join(nativeBuild, "sing-box"), ["check", "-c", serverPath]);
+let server = spawn(join(nativeBuild, "sing-box"), ["run", "-c", serverPath], {
   stdio: ["ignore", "ignore", "pipe"],
 });
 let stderr = "";
 server.stderr.on("data", (value) => (stderr = (stderr + value).slice(-4000)));
 const native = new NativeSession(
-  resolve("dist/flowgate-bridge"),
-  resolve("dist/sing-box"),
+  join(nativeBuild, "flowgate-bridge"),
+  join(nativeBuild, "sing-box"),
   join(directory, "native"),
 );
 const port = await availablePort();
 const checks: string[] = [];
+const result: {
+  passed: boolean;
+  checks: string[];
+  dnsQueries?: number;
+  error?: string;
+  cleanupError?: string;
+  scope: string;
+} = {
+  passed: false,
+  checks,
+  scope:
+    "isolated loopback protocol servers; no system DNS/routes/proxy writes",
+};
 async function request(target: string) {
   return (
     await exec("/usr/bin/curl", [
@@ -204,16 +222,28 @@ async function request(target: string) {
     ])
   ).stdout;
 }
-async function udp() {
+async function udp(timeout = 8000) {
   const socket = connect(port, "127.0.0.1");
-  await once(socket, "connect");
-  const outgoing = createSocket("udp4");
-  await new Promise<void>((r) => outgoing.bind(0, "127.0.0.1", r));
+  let outgoing: ReturnType<typeof createSocket> | undefined;
   try {
-    let answer = once(socket, "data");
+    await once(socket, "connect", { signal: AbortSignal.timeout(timeout) });
+    outgoing = createSocket("udp4");
+    const datagram = outgoing;
+    await within(
+      new Promise<void>((resolve, reject) => {
+        datagram.once("error", reject);
+        datagram.bind(0, "127.0.0.1", () => {
+          datagram.removeListener("error", reject);
+          resolve();
+        });
+      }),
+      timeout,
+      "UDP bind deadline exceeded",
+    );
+    let answer = once(socket, "data", { signal: AbortSignal.timeout(timeout) });
     socket.write(Buffer.from([5, 1, 0]));
     assert.deepEqual((await answer)[0], Buffer.from([5, 0]));
-    answer = once(socket, "data");
+    answer = once(socket, "data", { signal: AbortSignal.timeout(timeout) });
     const associate = Buffer.from([5, 3, 0, 1, 127, 0, 0, 1, 0, 0]);
     associate.writeUInt16BE(outgoing.address().port, 8);
     socket.write(associate);
@@ -225,7 +255,7 @@ async function udp() {
     const packet = Buffer.from([0, 0, 0, 1, 127, 0, 0, 1, 0, 0]);
     packet.writeUInt16BE(echo.address().port, 8);
     const response = once(outgoing, "message", {
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(timeout),
     });
     outgoing.send(
       Buffer.concat([packet, Buffer.from("udp-echo-ok")]),
@@ -237,9 +267,54 @@ async function udp() {
       "udp-echo-ok",
     );
   } finally {
-    outgoing.close();
-    socket.destroy();
+    try {
+      outgoing?.close();
+    } catch (error) {
+      if (
+        (error as NodeJS.ErrnoException).code !== "ERR_SOCKET_DGRAM_NOT_RUNNING"
+      )
+        throw error;
+    } finally {
+      socket.destroy();
+    }
   }
+}
+async function stopPeer() {
+  const cleanup = await stopOwnedChild(server);
+  assert.equal(cleanup.forced, false, "Forced peer cleanup fails acceptance");
+}
+async function proveNoBypass(label: string) {
+  await stopPeer();
+  const originBefore = originRequests,
+    echoBefore = echoRequests;
+  await assert.rejects(() => request(`http://127.0.0.1:${originPort}/`));
+  await assert.rejects(() => udp(1000));
+  assert.equal(
+    originRequests,
+    originBefore,
+    label + " offline TCP must not reach direct origin",
+  );
+  assert.equal(
+    echoRequests,
+    echoBefore,
+    label + " offline UDP must not reach direct origin",
+  );
+  server = spawn(join(nativeBuild, "sing-box"), ["run", "-c", serverPath], {
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  server.stderr.on("data", (value) => (stderr = (stderr + value).slice(-4000)));
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  assert.equal(server.exitCode, null, stderr);
+  assert.equal(server.signalCode, null, stderr);
+  assert.equal(
+    await request(`http://127.0.0.1:${originPort}/`),
+    "protocol-fixture-ok",
+  );
+  await udp();
+  checks.push(
+    label +
+      ": peer stopped blocks TCP/UDP without direct fallback; same configuration reconnects",
+  );
 }
 try {
   await new Promise((r) => setTimeout(r, 500));
@@ -277,12 +352,18 @@ try {
       "protocol-fixture-ok",
       definition.type + " IPv6",
     );
+    const dnsBefore = dnsQueries;
     assert.equal(
       await request(`http://${definition.type}.flowgate.test:${originPort}/`),
       "protocol-fixture-ok",
       definition.type + " DNS",
     );
+    assert.ok(
+      dnsQueries > dnsBefore,
+      definition.type + " must perform fixture DNS query",
+    );
     await udp();
+    await proveNoBypass(definition.type);
     checks.push(
       definition.type + ": TCP, IPv6 destination, DNS, SOCKS UDP forwarding",
     );
@@ -327,6 +408,7 @@ try {
       "protocol-fixture-ok",
     );
     await udp();
+    await proveNoBypass("converted " + document.format);
     checks.push(
       document.format + ": converted VMess TCP and UDP reach local origin",
     );
@@ -343,27 +425,7 @@ try {
     await request(`http://127.0.0.1:${originPort}/`),
     "protocol-fixture-ok",
   );
-  const beforeDisconnect = originRequests;
-  server.kill();
-  await once(server, "exit");
-  await assert.rejects(() => request(`http://127.0.0.1:${originPort}/`));
-  assert.equal(
-    originRequests,
-    beforeDisconnect,
-    "external disconnect must not fall back to direct",
-  );
-  server = spawn(resolve("dist/sing-box"), ["run", "-c", serverPath], {
-    stdio: ["ignore", "ignore", "pipe"],
-  });
-  server.stderr.on("data", (value) => (stderr = (stderr + value).slice(-4000)));
-  await new Promise((resolve) => setTimeout(resolve, 500));
-  assert.equal(
-    await request(`http://127.0.0.1:${originPort}/`),
-    "protocol-fixture-ok",
-  );
-  checks.push(
-    "external SOCKS stops without fallback and reconnects without configuration replacement",
-  );
+  await proveNoBypass("external SOCKS");
   config.externalNetworks = [
     {
       id: "loopback-path",
@@ -462,30 +524,61 @@ try {
     "no direct fallback after selected proxy stops",
   );
   checks.push("proxy offline does not fall back to direct TLS");
-  await writeFile(
-    "work/protocols-result.json",
-    JSON.stringify(
-      {
-        passed: true,
-        at: new Date().toISOString(),
-        checks,
-        dnsQueries,
-        scope:
-          "isolated loopback protocol servers; no system DNS/routes/proxy writes",
-      },
-      null,
-      2,
-    ),
-  );
+  result.passed = true;
 } catch (error) {
+  result.error = String(error);
   console.error(stderr);
   throw error;
 } finally {
-  await native.close();
-  server.kill();
-  if (server.exitCode === null) await once(server, "exit").catch(() => {});
-  await new Promise<void>((r) => tlsOrigin.close(() => r()));
-  dns.close();
-  echo.close();
-  await new Promise<void>((r) => origin.close(() => r()));
+  const bridge = (native as any).process;
+  let cleanupFailure;
+  try {
+    await cleanupStages([
+      async () => {
+        let failure;
+        try {
+          await within(native.close(), 10000, "Native close deadline exceeded");
+        } catch (error) {
+          failure = error;
+        }
+        if (bridge && bridge.exitCode === null && bridge.signalCode === null) {
+          await stopOwnedChild(bridge);
+          failure ??= new Error("Native close left owned bridge alive");
+        }
+        if (failure) throw failure;
+      },
+      stopPeer,
+      () =>
+        within(
+          new Promise<void>((resolve, reject) => {
+            tlsOrigin.closeAllConnections();
+            tlsOrigin.close((error) => (error ? reject(error) : resolve()));
+          }),
+          5000,
+          "TLS fixture close deadline exceeded",
+        ),
+      () => new Promise<void>((resolve) => dns.close(resolve)),
+      () => new Promise<void>((resolve) => echo.close(resolve)),
+      () =>
+        within(
+          new Promise<void>((resolve, reject) => {
+            origin.closeAllConnections();
+            origin.close((error) => (error ? reject(error) : resolve()));
+          }),
+          5000,
+          "HTTP fixture close deadline exceeded",
+        ),
+    ]);
+  } catch (error) {
+    result.passed = false;
+    result.cleanupError = String(error);
+    cleanupFailure = error;
+  } finally {
+    result.dnsQueries = dnsQueries;
+    await writeFile(
+      "work/protocols-result.json",
+      JSON.stringify(result, null, 2),
+    );
+  }
+  if (cleanupFailure) throw cleanupFailure;
 }

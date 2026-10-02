@@ -1,15 +1,16 @@
 import assert from "node:assert/strict";
 
-export async function within(promise, milliseconds) {
+export async function within(
+  promise,
+  milliseconds,
+  message = "Cleanup deadline exceeded",
+) {
   let timer;
   try {
     return await Promise.race([
       promise,
       new Promise((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error("Cleanup deadline exceeded")),
-          milliseconds,
-        );
+        timer = setTimeout(() => reject(new Error(message)), milliseconds);
       }),
     ]);
   } finally {
@@ -19,21 +20,9 @@ export async function within(promise, milliseconds) {
 
 // Capture the child handle and inspector identity while the automation link works.
 // A closed Playwright context alone does not prove this process has exited.
-export async function captureSoakProcess(app, data, executablePath) {
+export function captureSoakChild(app) {
   const child = app.process();
   assert.ok(child?.pid, "Soak requires a locally owned child process");
-  const identity = await app.evaluate(() => ({
-    pid: process.pid,
-    data: process.env.FLOWGATE_TEST_DATA,
-    executablePath: process.execPath,
-    inspector: process.mainModule.require("node:inspector").url(),
-  }));
-  assert.equal(identity.pid, child.pid);
-  assert.equal(identity.data, data);
-  assert.equal(identity.executablePath, executablePath);
-  const endpoint = new URL(identity.inspector);
-  assert.equal(endpoint.protocol, "ws:");
-  assert.equal(endpoint.hostname, "127.0.0.1");
   const exited = new Promise((resolve) => child.once("exit", resolve));
   const isExited = () => child.exitCode !== null || child.signalCode !== null;
   const waitForExit = async (milliseconds) => {
@@ -41,7 +30,33 @@ export async function captureSoakProcess(app, data, executablePath) {
     await within(exited, milliseconds).catch(() => {});
     return isExited();
   };
-  return { child, identity, waitForExit, isExited };
+  return { child, waitForExit, isExited };
+}
+
+export async function captureSoakProcess(
+  app,
+  data,
+  executablePath,
+  { timeout = 10000, owned = captureSoakChild(app) } = {},
+) {
+  const identity = await within(
+    app.evaluate(() => ({
+      pid: process.pid,
+      data: process.env.FLOWGATE_TEST_DATA,
+      executablePath: process.execPath,
+      inspector: process.mainModule.require("node:inspector").url(),
+    })),
+    timeout,
+    "Application identity capture deadline exceeded",
+  );
+  assert.equal(identity.pid, owned.child.pid);
+  assert.equal(identity.data, data);
+  assert.equal(identity.executablePath, executablePath);
+  const endpoint = new URL(identity.inspector);
+  assert.equal(endpoint.protocol, "ws:");
+  assert.equal(endpoint.hostname, "127.0.0.1");
+  owned.identity = identity;
+  return owned;
 }
 
 async function inspectorQuit({ identity }) {
@@ -115,22 +130,32 @@ export async function closeSoakApp(app, owned) {
       graceful: false,
       errors: [...result.errors, "Child identity was not captured"],
     };
-  if (await owned.waitForExit(1000)) return { ...result, processExited: true };
+  const finished = () => ({
+    ...result,
+    processExited: true,
+    exitCode: owned.child.exitCode,
+    signalCode: owned.child.signalCode,
+    graceful:
+      result.graceful &&
+      owned.child.exitCode === 0 &&
+      owned.child.signalCode === null,
+  });
+  if (await owned.waitForExit(1000)) return finished();
   result.method = "inspector-app-quit";
   try {
+    if (!owned.identity) throw new Error("Inspector identity was not captured");
     await inspectorQuit(owned);
   } catch (error) {
     result.errors.push(String(error.message).slice(0, 300));
   }
-  if (await owned.waitForExit(10000)) return { ...result, processExited: true };
+  if (await owned.waitForExit(10000)) return finished();
   // This is the original ChildProcess handle, never a PID recovered from a report.
   // Forced cleanup is always reported as a failure of graceful shutdown.
   result.graceful = false;
   for (const signal of ["SIGTERM", "SIGKILL"]) {
     result.method = signal;
     if (!owned.isExited()) owned.child.kill(signal);
-    if (await owned.waitForExit(5000))
-      return { ...result, processExited: true };
+    if (await owned.waitForExit(5000)) return finished();
   }
   return result;
 }

@@ -69,6 +69,8 @@ jobs:
         run: node tests/package.integration.mjs
       - name: Verify sustained-test completion and cooperative cleanup
         run: node tests/soak-control.integration.mjs
+      - name: Verify hung IPC deadlines and isolated process cleanup
+        run: node tests/soak-timeout.integration.mjs
       - name: Verify real privileged recovery on the isolated runner
         env:
           FLOWGATE_PRIVILEGED_CI: "1"

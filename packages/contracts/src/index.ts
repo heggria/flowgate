@@ -127,6 +127,8 @@ export interface Configuration {
 export const RECOVERY_DISCONNECT_OPERATION_ID = "recovery-disconnect";
 export interface Operation {
   nativeMode?: Settings["mode"];
+  /** Exact connect descriptor persisted before native submission, never a later draft. */
+  plannedConnection?: AppliedConnection;
   recoveredBy?: string;
   context?: TraceContext;
   id: string;

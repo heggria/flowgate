@@ -26,13 +26,20 @@ function validateDNSAddress(value: string, label: string) {
       ["https:", "tls:", "udp:"].includes(url.protocol) &&
       url.hostname &&
       !url.username &&
-      !url.password
+      !url.password &&
+      !url.hash &&
+      (url.protocol === "https:" || (!url.pathname && !url.search))
     )
       return;
   } catch {
     /* Normalize parser failures; do not expose the supplied address. */
   }
-  throw new Error(`${label}须为 HTTPS、TLS 或 UDP，且包含有效服务器地址`);
+  throw new Error(
+    `${label}须为 HTTPS、TLS 或 UDP，且包含有效服务器地址；不支持 # 路由标记或附加参数，UDP/TLS 不能包含路径或查询参数`,
+  );
+}
+function dnsServerHost(url: URL) {
+  return url.hostname.replace(/^\[([^\]]+)\]$/, "$1");
 }
 export function validateConfiguration(c: Configuration): void {
   if (
@@ -279,7 +286,7 @@ export function compileConfiguration(c: Configuration) {
           ? "tls"
           : "udp",
     tag: "resolver",
-    server: dns.hostname,
+    server: dnsServerHost(dns),
     domain_resolver: "bootstrap",
     ...(dns.port ? { server_port: Number(dns.port) } : {}),
     ...(dns.protocol === "https:"
@@ -300,7 +307,7 @@ export function compileConfiguration(c: Configuration) {
             ? "tls"
             : "udp",
       tag: "dns-" + network.id,
-      server: u.hostname,
+      server: dnsServerHost(u),
       domain_resolver: "bootstrap",
       ...(u.port ? { server_port: Number(u.port) } : {}),
       ...(u.protocol === "https:"

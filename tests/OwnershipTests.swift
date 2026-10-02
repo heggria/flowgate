@@ -3,7 +3,8 @@ final class FixturePreferences: ProxyBackend, ProxyTransaction {
     var values: [String: [String: Any]] = ["wifi": ["ExceptionsList": ["*.local"]]]
     var failCommit = false
     var locked = false
-    func begin() throws -> ProxyTransaction { precondition(!locked); locked = true; return self }
+    var onBegin: (() throws -> Void)?
+    func begin() throws -> ProxyTransaction { precondition(!locked); locked = true; do { try onBegin?() } catch { locked = false; throw error }; return self }
     func unlock() { locked = false }
     func services() throws -> [String] { Array(values.keys) }
     func read(_ id: String) throws -> [String: Any] { guard let value = values[id] else { throw NSError(domain: "missing", code: 1) }; return value }
@@ -56,6 +57,23 @@ final class FixturePreferences: ProxyBackend, ProxyTransaction {
         backend.failCommit = false
         try SystemProxyOwner(journal: interrupted, backend: backend).restore(expectedKernel: (900002, "interrupted-birth"))
         precondition(backend.values["wifi"]!.isEmpty && interrupted.record.changes.isEmpty)
+        // A successor can replace the journal after the watchdog loads it but
+        // before the preference lock is acquired. The under-lock reread wins.
+        backend.failCommit = false
+        recovered.record.kernelPID = 900004; recovered.record.kernelBirth = "old-watchdog"
+        try SystemProxyOwner(journal: recovered, backend: backend).apply(port: 17890, operationId: "old-watchdog")
+        let staleWatcher = try OwnershipJournal(directory: directory)
+        let beforeSuccessor = backend.values
+        backend.onBegin = {
+            let successor = try OwnershipJournal(directory: directory)
+            successor.record.kernelPID = 900005; successor.record.kernelBirth = "successor"
+            try successor.persist()
+        }
+        try SystemProxyOwner(journal: staleWatcher, backend: backend).restore(expectedKernel: (900004, "old-watchdog"))
+        backend.onBegin = nil
+        precondition(NSDictionary(dictionary: backend.values).isEqual(to: beforeSuccessor), "Stale watchdog changed successor settings")
+        let latest = try OwnershipJournal(directory: directory)
+        precondition(latest.record.kernelPID == 900005 && latest.record.kernelBirth == "successor" && !latest.record.changes.isEmpty)
         print("PASS: ownership/PAC/foreign mutation/commit retry/missing service with injected preferences")
     }
 }

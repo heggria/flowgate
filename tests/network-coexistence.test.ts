@@ -356,3 +356,355 @@ test("manual and system proxy preserve OS routing while TUN keeps loop protectio
     assert.equal(compiled.inbounds[0].type, mode === "tun" ? "tun" : "mixed");
   }
 });
+
+for (const foreign of [false, true]) {
+  test(`wake coordinates a changed path before consuming it (${foreign ? "foreign proxy" : "gateway"})`, async () => {
+    const directory = await mkdtemp(join(tmpdir(), "flowgate-wake-path-"));
+    let observed: NetworkState = {
+      interfaces: [{ name: "en0", addresses: ["192.168.1.2"] }],
+      capturedAt: "",
+      defaultInterface: "en0",
+      defaultGateway: "192.168.1.1",
+      proxyEnabled: false,
+      dns: [],
+      routes: [],
+      warnings: [],
+      plugins: [],
+    };
+    let kernel: KernelState = { status: "stopped", systemControl: true };
+    let applies = 0,
+      stops = 0;
+    const core = new ServiceCore(
+      new StateStore(directory, 1),
+      {
+        status: async () => kernel,
+        apply: async (_config, revision, operationId) => {
+          applies++;
+          return (kernel = {
+            status: "running",
+            systemControl: true,
+            appliedRevision: revision,
+            operationId,
+            systemProxyOwned: true,
+          });
+        },
+        stop: async (operationId) => {
+          stops++;
+          return (kernel = {
+            status: "stopped",
+            systemControl: true,
+            operationId,
+          });
+        },
+      },
+      async (method) =>
+        method === "network.inspect" ? structuredClone(observed) : {},
+      "test",
+    );
+    try {
+      await core.start();
+      await core.request("network.refresh", {});
+      core.store.configuration.settings.mode = foreign ? "system" : "manual";
+      await core.request("proxy.connect", {}, "before-sleep");
+      core.suspend();
+      observed.defaultGateway = "192.168.1.254";
+      if (foreign) {
+        observed.proxyEnabled = true;
+        observed.systemProxies = [
+          { kind: "http", host: "127.0.0.1", port: 7890 },
+        ];
+        kernel.systemProxyOwned = false;
+      }
+      await core.resume();
+      await core.request("network.refresh", {});
+      await core.request("network.refresh", {});
+      assert.equal(applies, foreign ? 1 : 2);
+      assert.equal(stops, foreign ? 1 : 0);
+    } finally {
+      await core.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+}
+
+test("a committed unknown connect retains its original applied descriptor across restart and a different draft", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "flowgate-unknown-summary-"));
+  let observed: NetworkState = {
+    interfaces: [{ name: "en0", addresses: ["192.168.1.2"] }],
+    capturedAt: "",
+    defaultInterface: "en0",
+    defaultGateway: "192.168.1.1",
+    proxyEnabled: false,
+    dns: [],
+    routes: [],
+    warnings: [],
+    plugins: [],
+  };
+  let kernel: KernelState = { status: "stopped", systemControl: true };
+  let stops = 0;
+  const port = {
+    status: async () => kernel,
+    apply: async (_config: unknown, revision: number, operationId: string) => {
+      kernel = {
+        status: "running",
+        systemControl: true,
+        appliedRevision: revision,
+        operationId,
+        systemProxyOwned: true,
+      };
+      throw Object.assign(Error("committed reply lost"), {
+        outcome: "unknown",
+      });
+    },
+    stop: async (operationId: string) => {
+      stops++;
+      return (kernel = {
+        status: "stopped" as const,
+        systemControl: true,
+        operationId,
+      });
+    },
+  };
+  const extension = async (method: string) =>
+    method === "network.inspect" ? structuredClone(observed) : {};
+  let core = new ServiceCore(
+    new StateStore(directory, 1),
+    port,
+    extension,
+    "test",
+  );
+  try {
+    await core.start();
+    await core.request("network.refresh", {});
+    core.store.configuration.settings.mode = "system";
+    const originalPort = core.store.configuration.settings.listenPort;
+    await assert.rejects(core.request("proxy.connect", {}, "lost-reply"), {
+      outcome: "unknown",
+    });
+    // Model host loss before its drain can reconcile the committed reply.
+    // Release fixture timers/lock/bindings directly; the native plane survives.
+    core.suspend();
+    await core.store.close();
+    await core.native.dispose();
+    core = new ServiceCore(
+      new StateStore(directory, 2),
+      port,
+      extension,
+      "test",
+    );
+    await core.start();
+    assert.equal(
+      core.store.operations.find((o) => o.id === "lost-reply")?.state,
+      "succeeded",
+    );
+    assert.equal(core.store.appliedConnection?.mode, "system");
+    assert.equal(core.store.appliedConnection?.listenPort, originalPort);
+    await core.request(
+      "configuration.save",
+      {
+        revision: 0,
+        settings: { mode: "manual", listenPort: originalPort + 1 },
+        rules: core.store.configuration.rules,
+      },
+      "new-draft",
+    );
+    assert.equal(core.store.appliedConnection?.mode, "system");
+    assert.equal(core.store.appliedConnection?.revision, 0);
+    assert.equal(core.store.appliedConnection?.listenPort, originalPort);
+    observed.proxyEnabled = true;
+    observed.systemProxies = [{ kind: "http", host: "127.0.0.1", port: 7890 }];
+    kernel.systemProxyOwned = false;
+    await core.request("network.refresh", {});
+    assert.equal(stops, 1);
+  } finally {
+    core.store.operations = [];
+    await core.stop();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("legacy reconciled system operations yield without reconstructing a summary from the draft", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "flowgate-legacy-summary-"));
+  let observed: NetworkState = {
+    interfaces: [],
+    capturedAt: "",
+    defaultInterface: null,
+    defaultGateway: null,
+    proxyEnabled: false,
+    dns: [],
+    routes: [],
+    warnings: [],
+    plugins: [],
+  };
+  let kernel: KernelState = { status: "stopped", systemControl: true };
+  let stops = 0;
+  const core = new ServiceCore(
+    new StateStore(directory, 1),
+    {
+      status: async () => kernel,
+      apply: async (_c, revision, operationId) =>
+        (kernel = {
+          status: "running",
+          systemControl: true,
+          appliedRevision: revision,
+          operationId,
+          systemProxyOwned: true,
+        }),
+      stop: async (operationId) => {
+        stops++;
+        return (kernel = {
+          status: "stopped",
+          systemControl: true,
+          operationId,
+        });
+      },
+    },
+    async (method) =>
+      method === "network.inspect" ? structuredClone(observed) : {},
+    "test",
+  );
+  try {
+    await core.start();
+    await core.request("network.refresh", {});
+    core.store.configuration.settings.mode = "system";
+    await core.request("proxy.connect", {}, "legacy");
+    // Model a pre-upgrade record: no exact descriptor was ever recorded.
+    delete core.store.appliedConnection;
+    delete core.store.operations[0].plannedConnection;
+    await core.request(
+      "configuration.save",
+      {
+        revision: 0,
+        settings: { mode: "manual" },
+        rules: core.store.configuration.rules,
+      },
+      "draft",
+    );
+    observed.proxyEnabled = true;
+    kernel.systemProxyOwned = false;
+    await core.request("network.refresh", {});
+    assert.equal(stops, 1);
+    assert.equal(core.store.appliedConnection, undefined);
+    assert.equal(core.store.operations.at(-1)?.nativeMode, "system");
+  } finally {
+    await core.stop();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+for (const legacy of [true, false]) {
+  test(`manual emergency stop cannot attest a privileged/unknown disconnect (${legacy ? "legacy stale summary" : "unmatched source"})`, async () => {
+    const directory = await mkdtemp(join(tmpdir(), "flowgate-stop-authority-"));
+    let kernel: KernelState = { status: "stopped", systemControl: true };
+    const observed: NetworkState = {
+      interfaces: [],
+      capturedAt: "",
+      defaultInterface: null,
+      defaultGateway: null,
+      proxyEnabled: false,
+      dns: [],
+      routes: [],
+      warnings: [],
+      plugins: [],
+    };
+    const port = {
+      status: async () => kernel,
+      apply: async (_c: unknown, revision: number, operationId: string) => {
+        kernel = {
+          status: "running",
+          systemControl: true,
+          operationId,
+          appliedRevision: revision,
+          systemProxyOwned: operationId === "legacy-system",
+        };
+        if (operationId === "legacy-system")
+          throw Object.assign(Error("committed reply lost"), {
+            outcome: "unknown",
+          });
+        return kernel;
+      },
+      stop: async () => {
+        throw Object.assign(Error("stop unconfirmed"), { outcome: "unknown" });
+      },
+    };
+    const extension = async (method: string) =>
+      method === "network.inspect" ? structuredClone(observed) : {};
+    let core = new ServiceCore(
+      new StateStore(directory, 1),
+      port,
+      extension,
+      "test",
+    );
+    try {
+      await core.start();
+      await core.request("proxy.connect", {}, "prior-manual");
+      if (legacy) {
+        await core.request(
+          "configuration.save",
+          { revision: 0, settings: { mode: "system" }, rules: [] },
+          "system-draft",
+        );
+        await assert.rejects(
+          core.request("proxy.connect", {}, "legacy-system"),
+          { outcome: "unknown" },
+        );
+        delete core.store.operations.find((o) => o.id === "legacy-system")!
+          .plannedConnection;
+        await core.store.persist();
+        core.suspend();
+        await core.store.close();
+        await core.native.dispose();
+        core = new ServiceCore(
+          new StateStore(directory, 2),
+          port,
+          extension,
+          "test",
+        );
+        await core.start();
+        assert.equal(
+          core.store.operations.find((o) => o.id === "legacy-system")?.state,
+          "succeeded",
+        );
+        assert.equal(core.store.appliedConnection?.operationId, "prior-manual");
+      } else {
+        // Native identity has no matching persisted source; current draft is manual.
+        kernel = {
+          status: "running",
+          systemControl: true,
+          operationId: "unrecorded-system",
+          appliedRevision: 7,
+        };
+      }
+      await assert.rejects(
+        core.request("proxy.disconnect", {}, "stop-unknown"),
+        { outcome: "unknown" },
+      );
+      const stop = core.store.operations.find((o) => o.id === "stop-unknown")!;
+      assert.equal(stop.nativeMode, legacy ? "system" : undefined);
+      // Even an exact stop ID on a manual fallback cannot attest unknown authority.
+      kernel = {
+        status: "stopped",
+        systemControl: false,
+        operationId: "stop-unknown",
+      };
+      await core.request("operation.get", { id: stop.id });
+      assert.equal(stop.state, "unknown");
+      kernel = {
+        status: "stopped",
+        systemControl: false,
+        operationId: "recovery-disconnect",
+      };
+      await core.request("operation.get", { id: stop.id });
+      assert.equal(stop.state, "unknown");
+      assert.equal(stop.recoveredBy, undefined);
+      kernel = { ...kernel, systemControl: true };
+      await core.request("operation.get", { id: stop.id });
+      assert.equal(stop.state, "succeeded");
+      assert.equal(stop.recoveredBy, "recovery-disconnect");
+    } finally {
+      core.store.operations = [];
+      await core.stop();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+}

@@ -14,10 +14,28 @@ import {
 } from "./fixtures/soak-observation.ts";
 import {
   captureSoakProcess,
+  captureSoakChild,
   closeSoakApp,
   within,
 } from "./fixtures/soak-cleanup.mjs";
 
+const ipcTimeout = Number(process.env.FLOWGATE_SOAK_IPC_TIMEOUT_MS ?? 30000);
+assert.ok(
+  Number.isInteger(ipcTimeout) && ipcTimeout > 0 && ipcTimeout <= 120000,
+  "Soak IPC timeout must be 1–120000 milliseconds",
+);
+const testHang = process.env.FLOWGATE_SOAK_TEST_HANG;
+assert.ok(
+  testHang === undefined || ["command", "snapshot"].includes(testHang),
+  "Unknown soak hung-read fixture",
+);
+let hangArmed = false;
+const bounded = (label, read) =>
+  within(
+    Promise.resolve().then(read),
+    ipcTimeout,
+    `Soak ${label} deadline exceeded`,
+  );
 const seconds = Number(process.env.FLOWGATE_SOAK_SECONDS ?? 1800);
 assert.ok(
   Number.isInteger(seconds) && seconds >= 20 && seconds <= 86400,
@@ -118,10 +136,12 @@ try {
       FLOWGATE_TEST_VISIBLE: "0",
     },
   });
+  ownedProcess = captureSoakChild(app);
   ownedProcess = await captureSoakProcess(
     app,
     data,
     join(bundle, "Contents/MacOS/FlowGate"),
+    { owned: ownedProcess, timeout: ipcTimeout },
   );
   const record = (event) => {
     if (result.lifecycle.length < 20)
@@ -129,20 +149,31 @@ try {
   };
   app.on("close", () => record("automation-app-close"));
   ownedProcess.child.once("exit", () => record("application-process-exit"));
-  page = await app.firstWindow();
+  page = await bounded("first window", () => app.firstWindow());
   page.on("close", () => record("automation-page-close"));
   page.on("crash", () => record("renderer-crash"));
   await page
     .getByRole("heading", { name: "概览", exact: true })
     .waitFor({ timeout: 30000 });
-  const port = await isolateProxyPort(page);
+  const port = await bounded("proxy port isolation", () =>
+    isolateProxyPort(page),
+  );
   const command = (method) =>
-    page.evaluate(
-      (method) => window.flowgate.request(method, {}, crypto.randomUUID()),
-      method,
+    bounded("command " + method, () =>
+      hangArmed && testHang === "command"
+        ? new Promise(() => {})
+        : page.evaluate(
+            (method) =>
+              window.flowgate.request(method, {}, crypto.randomUUID()),
+            method,
+          ),
     );
   const snapshot = () =>
-    page.evaluate(() => window.flowgate.request("snapshot"));
+    bounded("snapshot", () =>
+      hangArmed && testHang === "snapshot"
+        ? new Promise(() => {})
+        : page.evaluate(() => window.flowgate.request("snapshot")),
+    );
   await command("proxy.connect");
   const initial = await snapshot();
   assert.equal(initial.configuration.settings.mode, "manual");
@@ -188,9 +219,11 @@ try {
     }
     const round = result.samples.length;
     assert.equal(
-      await app.evaluate(({ BrowserWindow }) =>
-        BrowserWindow.getAllWindows().some(
-          (w) => w.isVisible() || w.isFocused() || w.isFocusable(),
+      await bounded("hidden-window check", () =>
+        app.evaluate(({ BrowserWindow }) =>
+          BrowserWindow.getAllWindows().some(
+            (w) => w.isVisible() || w.isFocused() || w.isFocusable(),
+          ),
         ),
       ),
       false,
@@ -239,10 +272,12 @@ try {
       false,
     );
     previousState = state;
-    const memoryKiB = await app.evaluate(({ app }) =>
-      app
-        .getAppMetrics()
-        .reduce((sum, metric) => sum + metric.memory.workingSetSize, 0),
+    const memoryKiB = await bounded("memory metrics", () =>
+      app.evaluate(({ app }) =>
+        app
+          .getAppMetrics()
+          .reduce((sum, metric) => sum + metric.memory.workingSetSize, 0),
+      ),
     );
     const elapsed = Math.round((Date.now() - started) / 1000);
     assert.ok(
@@ -271,6 +306,14 @@ try {
         2,
       ),
     );
+    if (round === 0 && testHang) {
+      // Harness regression only: a never-settling read with a live, isolated app.
+      // This verifies deadline/cleanup, not a reproduced product IPC defect.
+      result.injectedIPCHang = testHang;
+      hangArmed = true;
+      if (testHang === "command") await command("proxy.disconnect");
+      else await snapshot();
+    }
     if (round === 0 && process.env.FLOWGATE_SOAK_TEST_DISCONNECT === "1") {
       // Regression fixture only: drop Chromium's automation transport while the
       // real isolated application and kernel remain alive. This is not sleep.
