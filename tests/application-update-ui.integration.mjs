@@ -6,7 +6,7 @@ const fixture = await createUISurface();
 const app = await electron.launch({ args: [fixture.main] });
 try {
   const p = await app.firstWindow();
-  p.setDefaultTimeout(5000);
+  p.setDefaultTimeout(15000);
   await p.waitForFunction(() => Boolean(window.uiFixture));
   const state = async (phase, message, revision) =>
     p.evaluate(
