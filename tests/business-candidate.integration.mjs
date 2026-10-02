@@ -16,7 +16,11 @@ import {
   inventory as artifactInventory,
 } from "../scripts/artifacts.mjs";
 import { verifyDirectory } from "../packages/release/src/loader.ts";
-import { captureSoakProcess, closeSoakApp } from "./fixtures/soak-cleanup.mjs";
+import {
+  captureSoakProcess,
+  closeSoakApp,
+  within,
+} from "./fixtures/soak-cleanup.mjs";
 import {
   waitForAsyncPredicate,
   isContextReplacementError,
@@ -213,7 +217,7 @@ const result = {
   commit: provenance.commit,
   release: manifest.id,
   version: manifest.version,
-  requestManifestSHA256: sha(requestManifestBytes),
+  requestManifestSHA256: sha(channelTarget.content),
   testTrustOnly: true,
   officiallySigned: false,
   published: false,
@@ -374,16 +378,19 @@ try {
 } catch (error) {
   result.error = String(error.message).slice(0, 1000);
   try {
-    result.shellStatus = await (
-      await app.firstWindow()
-    ).evaluate(async () => {
-      const state = await window.shell.request("release.status");
-      return {
-        current: state.current,
-        updating: state.updating,
-        suspended: state.suspended,
-      };
-    });
+    result.shellStatus = await within(
+      app.firstWindow().then((page) =>
+        page.evaluate(async () => {
+          const state = await window.shell.request("release.status");
+          return {
+            current: state.current,
+            updating: state.updating,
+            suspended: state.suspended,
+          };
+        }),
+      ),
+      2000,
+    );
   } catch {}
 } finally {
   try {
