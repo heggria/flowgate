@@ -8,7 +8,7 @@ import { Metadata, MetadataKind } from "@tufjs/models";
 import { verifyArtifacts, inventory } from "./artifacts.mjs";
 import {
   validateRelease,
-  verifyDirectory,
+  verifyPublishedDirectory,
 } from "../packages/release/src/loader.ts";
 import {
   readPublisherRepository,
@@ -131,7 +131,7 @@ export async function prepareBusinessRelease(options) {
       packageVersion,
       "Component version differs from candidate",
     );
-  await verifyDirectory(join(build, "release"), manifest);
+  await verifyPublishedDirectory(join(build, "release"), manifest);
   const buildBytes = await readFile(join(build, "build-manifest.json"));
   // mkdir is the ownership boundary: an existing directory is never deleted.
   await mkdir(actualOutput);

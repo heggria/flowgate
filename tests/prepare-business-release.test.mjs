@@ -233,6 +233,19 @@ test("prepares public unsigned request, exact hashes and clean source/baseline p
     await rm(f.directory, { recursive: true, force: true });
   }
 });
+test("prepares a macOS candidate on a Linux signing host", async () => {
+  const f = await fixture();
+  const platform = Object.getOwnPropertyDescriptor(process, "platform");
+  try {
+    Object.defineProperty(process, "platform", { ...platform, value: "linux" });
+    const result = await prepareBusinessRelease(f.options);
+    assert.deepEqual(result.release.platforms, ["darwin-arm64"]);
+    assert.equal(result.unsigned, true);
+  } finally {
+    Object.defineProperty(process, "platform", platform);
+    await rm(f.directory, { recursive: true, force: true });
+  }
+});
 for (const scenario of [
   "dirty-source",
   "dirty-build",
