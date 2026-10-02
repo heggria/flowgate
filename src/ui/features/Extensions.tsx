@@ -1,3 +1,4 @@
+import { shellRequest } from "../../../packages/client/src/index";
 import {
   Button,
   Toggle,
@@ -353,7 +354,7 @@ export function Extensions({ snapshot, run, busy, navigate }: FeatureProps) {
                 pending={Boolean(busy)}
                 onClick={() =>
                   void run(async () => {
-                    const all = (await window.shell.request(
+                    const all = (await shellRequest(
                       "diagnostics.trace",
                     )) as Event[];
                     setEvents(

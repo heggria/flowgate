@@ -138,7 +138,15 @@ export function planSubscriptionProfile(
           url.hostname === "system"
         )
           throw new Error();
-        dnsServer = url.href;
+        if (url.hash)
+          blockers.add(
+            "DNS 上游地址包含 # 路由标记或附加参数，当前无法无损迁移。",
+          );
+        else if (url.protocol !== "https:" && (url.pathname || url.search))
+          blockers.add(
+            "UDP/TLS DNS 上游地址包含路径或查询参数，当前无法无损迁移。",
+          );
+        else dnsServer = url.href;
       } catch {
         blockers.add("DNS 上游地址无法迁移。");
       }

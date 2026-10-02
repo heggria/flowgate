@@ -15,6 +15,7 @@ import {
   inventory,
   sealArtifacts,
   verifyArtifacts,
+  sealSignedArtifacts,
 } from "../scripts/artifacts.mjs";
 import { boundaryViolations } from "../scripts/check-boundaries.mjs";
 
@@ -64,13 +65,35 @@ test("packaging rejects missing, altered and unexpected files", async () => {
       "release/service.cjs",
     ])
       await writeFile(join(root, file), "fixture");
-    await sealArtifacts(root, { version: "0.2.0" });
+    const source = await sealArtifacts(root, {
+      version: "0.2.0",
+      commit: "source-commit",
+      dirty: false,
+    });
+    await verifyArtifacts(root);
+    // A real code signature changes executable bytes; stale source hashes
+    // must fail until the narrowly constrained signing seal is written.
+    await writeFile(join(root, "flowgate-bridge"), "signed native fixture");
+    await assert.rejects(verifyArtifacts(root));
+    const signed = await sealSignedArtifacts(root, source);
+    assert.equal(signed.commit, source.commit);
+    assert.equal(signed.dirty, false);
+    assert.deepEqual(
+      signed.signingSource.nativeFiles["flowgate-bridge"],
+      source.files["flowgate-bridge"],
+    );
+    assert.notDeepEqual(
+      signed.files["flowgate-bridge"],
+      source.files["flowgate-bridge"],
+    );
     await verifyArtifacts(root);
     await writeFile(join(root, "stale-secret.txt"), "not for distribution");
     await assert.rejects(verifyArtifacts(root));
+    await assert.rejects(sealSignedArtifacts(root, source), /file set/);
     await rm(join(root, "stale-secret.txt"));
     await writeFile(join(root, "main.cjs"), "modified");
     await assert.rejects(verifyArtifacts(root));
+    await assert.rejects(sealSignedArtifacts(root, source), /non-native/);
     await rm(join(root, "sing-box"));
     await assert.rejects(sealArtifacts(root, {}), /missing/);
   } finally {

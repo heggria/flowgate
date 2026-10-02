@@ -1,3 +1,4 @@
+import { shellRequest } from "../../packages/client/src/index";
 import { useEffect, useState } from "react";
 import type {
   AppearanceSource,
@@ -35,8 +36,7 @@ export function useAppearance(): [
     let active = true;
     localStorage.setItem("flowgate.theme", source);
     // Older compatible shells and presentation fixtures may not expose native appearance.
-    void window.shell
-      .request("appearance.set", { source })
+    void shellRequest("appearance.set", { source })
       .then((value) => {
         const current = value as NativeAppearance | null;
         if (

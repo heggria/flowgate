@@ -12,9 +12,10 @@ const probe = createServer();
 await new Promise<void>((r) => probe.listen(0, "127.0.0.1", r));
 const port = (probe.address() as any).port;
 await new Promise<void>((r) => probe.close(() => r()));
+const nativeBuild = resolve(process.env.FLOWGATE_NATIVE_BUILD_DIR ?? "dist");
 const native = new NativeSession(
-  resolve("dist/flowgate-bridge"),
-  resolve("dist/sing-box"),
+  join(nativeBuild, "flowgate-bridge"),
+  join(nativeBuild, "sing-box"),
   dir,
 );
 function alive(pid: number) {
@@ -55,13 +56,37 @@ try {
   await assert.rejects(() =>
     native.apply(compileConfiguration(config), 3, "must-reject"),
   );
+  // No replacement bridge or recoverStop may run before these observations.
+  // This distinguishes the independent manual-mode watchdog from recovery cleanup.
   await wait(() => !alive(second.pid!));
+  const orphanPort = createServer();
+  await new Promise<void>((resolve, reject) => {
+    orphanPort.once("error", reject);
+    orphanPort.listen(port, "127.0.0.1", resolve);
+  });
+  await new Promise<void>((resolve) => orphanPort.close(() => resolve()));
+  const recovered = await native.recoverStop("recovery-disconnect");
+  assert.equal(recovered.status, "stopped");
+  assert.equal(recovered.operationId, "recovery-disconnect");
+  assert.equal(
+    alive(second.pid!),
+    false,
+    "recovery must account for the old kernel before returning stopped",
+  );
   const bound = createServer();
   await new Promise<void>((resolve, reject) => {
     bound.once("error", reject);
     bound.listen(port, "127.0.0.1", resolve);
   });
   await new Promise<void>((r) => bound.close(() => r()));
+  const third = await native.apply(
+    compileConfiguration(config),
+    3,
+    "user-reconnect",
+  );
+  assert.equal(third.status, "running");
+  assert.notEqual(third.pid, second.pid);
+  await native.stop("finish-recovery-test");
   await writeFile(
     join("work", "native-faults-result.json"),
     JSON.stringify(
@@ -72,8 +97,10 @@ try {
           "kernel SIGKILL reported as failed",
           "explicit restart recovers",
           "bridge SIGKILL reports unknown and rejects writes",
-          "independent watchdog terminates orphan kernel",
+          "manual watchdog terminates orphan kernel and releases port before explicit recoverStop",
           "owned port released",
+          "explicit recovery rebuilds the bridge and confirms old kernel exit",
+          "user reconnect succeeds after bridge recovery",
         ],
         scope: "manual mode only; no global network changes",
       },

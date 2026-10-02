@@ -1,8 +1,8 @@
 # FlowGate
 
-macOS Apple Silicon 上的模块化代理工作区，使用 Electron 44.3.0、React 19 和 sing-box 1.14.0。
+macOS Apple Silicon 上的模块化代理工作区，使用 Electron 44.4.3、React 19 和 sing-box 1.14.0。
 
-当前可运行版本已经具备真实手动 HTTP/SOCKS 代理、订阅/节点管理与测速、规则集来源、分流、独立 DNS 与接口出口、实时连接统计、独立业务服务和经过 TUF 验证的业务版本切换。系统代理/TUN 的 Swift helper 已实现并编译，但尚未完成签名安装和真实系统接管验收；不能把当前构建当作已完成全部 v1 验收的正式发行版。
+当前可运行版本具备真实手动 HTTP/SOCKS 代理、订阅/节点管理与测速、规则集来源、分流、独立 DNS 与接口出口、实时连接统计、独立业务服务和经过 TUF 验证的业务版本切换。系统代理/TUN 可使用本机管理员批准的免费 helper，无需 Apple Developer 会员，步骤见 [LOCAL_DEVELOPMENT.md](LOCAL_DEVELOPMENT.md)。特权隔离 CI、用户机器实际网络、长期运行与正式签名分发是不同的验收项目；当前构建仍是开发候选，不能视为完整 v1 稳定发行。
 
 ## 启动
 
@@ -37,9 +37,9 @@ npm run build
 npm run package:mac
 ```
 
-生成 `dist-app/FlowGate.app`。默认是本机开发签名，不能启用要求正式团队签名的特权 helper。输出已存在时需选择新的 `FLOWGATE_PACKAGE_DIR`，避免覆盖已有应用。
+生成 `dist-app/FlowGate.app`。默认是本机 ad-hoc 开发签名；手动模式直接可用，系统代理/TUN 需在设置中安装并由管理员批准本地 helper。输出已存在时需选择新的 `FLOWGATE_PACKAGE_DIR`，避免覆盖已有应用。
 
-正式分发还需要 Apple Developer ID、正确的 Electron 签名/公证流程、官方 HTTPS 更新源及离线 TUF 信任根。开发构建不代表已完成正式签名、公证或特权网络验收。
+正式分发还需要 Apple Developer ID、正确的 Electron 签名/公证流程及完整应用 HTTPS 更新源。业务 TUF 更新使用仓库中固定的信任根，只有与当前 shell/schema 兼容且经过签名的版本才可激活；元数据续期不等于发布新代码。开发构建不代表正式签名、公证或用户机器的网络验收已经通过。
 
 ## 结构
 

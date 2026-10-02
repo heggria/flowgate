@@ -33,6 +33,12 @@ try {
   let page = await app.firstWindow();
   page.on("pageerror", (error) => errors.push(error.message));
   await page.getByRole("heading", { name: "概览", exact: true }).waitFor();
+  await page.evaluate(() =>
+    window.shell.request("appearance.set", { source: "light" }),
+  );
+  await page.waitForFunction(
+    () => document.documentElement.dataset.theme === "light",
+  );
   await isolateProxyPort(page);
   await page
     .getByRole("navigation", { name: "主导航" })

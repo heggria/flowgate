@@ -64,6 +64,7 @@ test("restart reconciles an interrupted disconnect by matching terminal operatio
   old.operations.push({
     id: "stop-1",
     kind: "proxy.disconnect",
+    nativeMode: "manual",
     state: "pending",
     revision: 0,
     traceId: "trace",

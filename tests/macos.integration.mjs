@@ -1,4 +1,5 @@
 import { _electron as electron } from "playwright";
+import { waitForAsyncPredicate } from "./async-poll.mjs";
 import { build } from "esbuild";
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
@@ -183,9 +184,11 @@ try {
     "dark",
   );
   await page.getByRole("button", { name: "切换浅色外观", exact: true }).click();
-  await page.waitForFunction(
-    async () =>
-      (await window.shell.request("appearance.get")).source === "light",
+  await waitForAsyncPredicate(() =>
+    page.evaluate(
+      async () =>
+        (await window.shell.request("appearance.get")).source === "light",
+    ),
   );
   await app.evaluate(({ Menu }) =>
     Menu.getApplicationMenu().getMenuItemById("appearance-system").click(),

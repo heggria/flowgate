@@ -1,3 +1,4 @@
+import { shellRequest } from "../../packages/client/src/index";
 import { useEffect, useRef, useState } from "react";
 export function useDraft<T extends object>(key: string, initial: T) {
   const [value, setValue] = useState(initial),
@@ -7,8 +8,7 @@ export function useDraft<T extends object>(key: string, initial: T) {
     latest = useRef(value);
   useEffect(() => {
     let alive = true;
-    void window.shell
-      .request("ui.draft.get", { key })
+    void shellRequest("ui.draft.get", { key })
       .then((saved) => {
         if (!alive) return;
         if (
@@ -41,13 +41,12 @@ export function useDraft<T extends object>(key: string, initial: T) {
     window.dispatchEvent(
       new CustomEvent("flowgate:draft", { detail: { key, value: next } }),
     );
-    void window.shell
-      .request("ui.draft.set", { key, value: next })
+    void shellRequest("ui.draft.set", { key, value: next })
       .then(() => setError(""))
       .catch(() => setError("草稿未保存，请暂缓更新界面"));
   };
   const clear = async (next: T) => {
-    await window.shell.request("ui.draft.set", { key, value: null });
+    await shellRequest("ui.draft.set", { key, value: null });
     window.dispatchEvent(
       new CustomEvent("flowgate:draft", { detail: { key, value: null } }),
     );

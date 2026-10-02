@@ -1,3 +1,14 @@
+import {
+  ProblemNavigation,
+  ProblemNotification,
+  ProblemPage,
+} from "./ProblemCenter";
+import {
+  problems,
+  safeMessage,
+  observeSnapshotProblems,
+} from "../../packages/client/src/problems";
+import { shellRequest } from "../../packages/client/src/index";
 import { useAppearance } from "./appearance";
 import { Button, InfoTip } from "./components";
 import React, {
@@ -33,11 +44,30 @@ import { kernelLabels } from "./format";
 function App({ routes }: { routes: RouteContribution[] }) {
   const [snapshot, setSnapshot] = useState<AppSnapshot | null>(null),
     [page, setPage] = useState("overview"),
-    [error, setError] = useState(""),
     [busy, setBusy] = useState(false),
     [notice, setNotice] = useState(""),
     [query, setQuery] = useState(""),
     [theme, setTheme] = useAppearance();
+  const setError = (value: unknown) => {
+    const message = safeMessage(value);
+    if (
+      message &&
+      !problems.snapshot().some((p) => !p.resolved && p.message === message)
+    )
+      problems.report("workspace", message);
+  };
+  useEffect(() => {
+    const navigate = (event: Event) => {
+      const target = (event as CustomEvent<string>).detail;
+      if (routes.some((route) => route.id === target)) {
+        setPage(target);
+        setQuery("");
+      }
+    };
+    window.addEventListener("flowgate:recovery-navigate", navigate);
+    return () =>
+      window.removeEventListener("flowgate:recovery-navigate", navigate);
+  }, [routes]);
   const [settingsDraft, setSettingsDraft] = useState<{
     port?: string;
     dns?: string;
@@ -53,8 +83,7 @@ function App({ routes }: { routes: RouteContribution[] }) {
       }
     };
     window.addEventListener("flowgate:draft", change);
-    void window.shell
-      .request("ui.draft.get", { key: "settings" })
+    void shellRequest("ui.draft.get", { key: "settings" })
       .then((value) => {
         if (active && !updated) setSettingsDraft(value as typeof settingsDraft);
       })
@@ -114,7 +143,8 @@ function App({ routes }: { routes: RouteContribution[] }) {
       if (mounted) {
         latestSnapshot = s;
         setSnapshot(s);
-        void window.shell.request("ui.ready");
+        observeSnapshotProblems(s);
+        void shellRequest("ui.ready");
       }
     };
     client
@@ -351,6 +381,15 @@ function App({ routes }: { routes: RouteContribution[] }) {
             <p className="navempty">没有匹配功能</p>
           ) : null}
         </nav>
+        <div className="sidebarproblems">
+          <ProblemNavigation
+            selected={page === "problems"}
+            navigate={() => {
+              setPage("problems");
+              setQuery("");
+            }}
+          />
+        </div>
         <div className="sidebarbottom">
           <span className="version">FlowGate {window.shell.version}</span>
           <Button
@@ -364,7 +403,9 @@ function App({ routes }: { routes: RouteContribution[] }) {
       </aside>
       <main>
         <header className="toolbar">
-          <span className="toolbarlocation">{route.label}</span>
+          <span className="toolbarlocation">
+            {page === "problems" ? "问题与恢复" : route.label}
+          </span>
           <div className="toolbarcontrols">
             <span className={`kernelstatus ${connected ? "running" : ""}`}>
               <i className={connected ? "dot online" : "dot"} />
@@ -397,14 +438,10 @@ function App({ routes }: { routes: RouteContribution[] }) {
             </Button>
           </div>
         </header>
-        {error ? (
-          <div role="alert" className="alert alert-error">
-            {error}
-            <Button aria-label="关闭错误" onClick={() => setError("")}>
-              <Icon name="close" size={14} />
-            </Button>
-          </div>
-        ) : null}
+        <ProblemNotification
+          selected={page === "problems"}
+          navigate={() => setPage("problems")}
+        />
         {pendingConfiguration ? (
           <div className="configurationbar" role="status">
             <div>
@@ -451,24 +488,28 @@ function App({ routes }: { routes: RouteContribution[] }) {
         {snapshot ? (
           <div className="content" data-page={page}>
             <fieldset className="workspacefields" aria-busy={busy}>
-              <SelectedPage
-                detailPanels={runtime.entries
-                  .filter((entry) => entry.kind === "detailPanel")
-                  .map((entry) => entry.value as DetailPanelContribution)}
-                settingsContributions={runtime.entries
-                  .filter((entry) => entry.kind === "settings")
-                  .map(
-                    (entry) =>
-                      entry.value as React.ComponentType<
-                        import("./modules").FeatureProps
-                      >,
-                  )}
-                snapshot={snapshot}
-                save={save}
-                run={run}
-                navigate={navigate}
-                busy={busy}
-              />
+              {page === "problems" ? (
+                <ProblemPage />
+              ) : (
+                <SelectedPage
+                  detailPanels={runtime.entries
+                    .filter((entry) => entry.kind === "detailPanel")
+                    .map((entry) => entry.value as DetailPanelContribution)}
+                  settingsContributions={runtime.entries
+                    .filter((entry) => entry.kind === "settings")
+                    .map(
+                      (entry) =>
+                        entry.value as React.ComponentType<
+                          import("./modules").FeatureProps
+                        >,
+                    )}
+                  snapshot={snapshot}
+                  save={save}
+                  run={run}
+                  navigate={navigate}
+                  busy={busy}
+                />
+              )}
             </fieldset>
           </div>
         ) : (
@@ -511,7 +552,7 @@ runtime.trace.onChange = () => {
   traceFlush = traceFlush
     .catch(() => {})
     .then(async () => {
-      await window.shell.request("ui.trace", event);
+      await shellRequest("ui.trace", event);
     });
 };
 const workspaceRoot = createRoot(document.getElementById("root")!);
@@ -524,7 +565,7 @@ workspaceRoot.render(
 void (async () => {
   [latestSnapshot, rendererContext] = await Promise.all([
     client.request<AppSnapshot>("snapshot"),
-    window.shell.request("ui.context") as Promise<
+    shellRequest("ui.context") as Promise<
       import("../../packages/contracts/src/index").TraceContext
     >,
   ]);
@@ -540,10 +581,12 @@ void (async () => {
         .map((e) => e.value as RouteContribution)}
     />,
   );
-})().catch(() => {
+})().catch((error) => {
   workspaceRoot.render(
     <div className="empty" role="alert">
-      工作区启动失败，请重新打开应用或使用恢复页面。
+      <h1>工作区启动失败</h1>
+      <p>{safeMessage(error)}</p>
+      <Button onClick={() => window.location.reload()}>重新加载工作区</Button>
     </div>,
   );
 });

@@ -52,6 +52,26 @@ export function parseSystemProxies(text: string) {
   }
   return result;
 }
+export function parseIPv4Routes(text: string): string[] {
+  // The command output is bounded by run(). Do not limit by address class or
+  // truncate before a VPN's public/static routes have been observed.
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => {
+      const [destination, gateway, flags, iface] = line.split(/\s+/);
+      return (
+        !!gateway &&
+        !!flags &&
+        !!iface &&
+        /^(?:default|(?:\d{1,3}\.){0,3}\d{1,3}(?:\/\d{1,2})?)$/.test(
+          destination,
+        ) &&
+        !/[LW]/.test(flags) &&
+        !(flags.includes("H") && !flags.includes("S"))
+      );
+    });
+}
 export async function inspectSystem(
   signal?: AbortSignal,
 ): Promise<Omit<Snapshot, "plugins">> {
@@ -110,12 +130,7 @@ export async function inspectSystem(
       )
       .slice(0, 100),
     dns: parseDns(value(2)),
-    routes: value(3)
-      .split("\n")
-      .filter((l) =>
-        /^(default|0\/1|128\.0\/1|100\.|10\.|172\.|192\.168)/.test(l.trim()),
-      )
-      .slice(0, 60),
+    routes: parseIPv4Routes(value(3)),
     warnings,
   };
 }

@@ -1,3 +1,4 @@
+import { shellRequest } from "../../../packages/client/src/index";
 import { useEffect, useRef, useState } from "react";
 import type { Subscription } from "../../../packages/contracts/src/index";
 import type {
@@ -71,8 +72,7 @@ export function ImportSubscription({
   useEffect(() => {
     if (source) return;
     let alive = true;
-    void window.shell
-      .request("ui.draft.get")
+    void shellRequest("ui.draft.get")
       .then((value) => {
         if (alive && !edited.current) setText(String(value ?? ""));
       })
@@ -145,7 +145,7 @@ export function ImportSubscription({
                 { previewId: preview.id, id: source?.id, reviewed: true },
               );
               if (!source) {
-                await window.shell.request("ui.draft.set", "");
+                await shellRequest("ui.draft.set", "");
                 await draft.clear({
                   name: "",
                   mode: draft.value.mode,
@@ -336,8 +336,7 @@ export function ImportSubscription({
                       onChange={(event) => {
                         edited.current = true;
                         setText(event.target.value);
-                        void window.shell
-                          .request("ui.draft.set", event.target.value)
+                        void shellRequest("ui.draft.set", event.target.value)
                           .then(() => setDraftError(""))
                           .catch(() =>
                             setDraftError("草稿未保存，请缩减输入后重试"),

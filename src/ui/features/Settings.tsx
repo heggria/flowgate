@@ -1,3 +1,4 @@
+import { shellRequest } from "../../../packages/client/src/index";
 import { Toggle, Button, InfoTip } from "../components";
 import { useEffect, useState } from "react";
 import { useDraft } from "../drafts";
@@ -44,8 +45,7 @@ export function Settings({
   const [helperBusy, setHelperBusy] = useState(false);
   useEffect(() => {
     let active = true;
-    window.shell
-      .request("helper.info")
+    shellRequest("helper.info")
       .then((value) => {
         if (active) setHelper(value as typeof helper);
       })
@@ -59,11 +59,9 @@ export function Settings({
     try {
       await run(async () => {
         try {
-          await window.shell.request(method);
+          await shellRequest(method);
         } finally {
-          setHelper(
-            (await window.shell.request("helper.info")) as typeof helper,
-          );
+          setHelper((await shellRequest("helper.info")) as typeof helper);
         }
       });
     } finally {

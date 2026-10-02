@@ -8,6 +8,7 @@ import { createRequire } from "node:module";
 const mockRepo = createRequire(import.meta.url)("@tufjs/repo-mock")
   .default as typeof import("@tufjs/repo-mock").default;
 import { ReleaseManager } from "../packages/release/src/manager";
+import { validateRelease } from "../packages/release/src/loader";
 import { UpdateCoordinator } from "../packages/shell/src/update-coordinator";
 import type { ReleaseSet } from "../packages/contracts/src/index";
 const bytes = "export {}";
@@ -29,6 +30,17 @@ const manifest: ReleaseSet = {
     },
   },
 };
+test("offline preparation validates the build platform while installation retains the host platform gate", () => {
+  const target = process.platform === "darwin" ? "linux-x64" : "darwin-arm64";
+  const candidate = { ...manifest, platforms: [target] };
+  assert.throws(() => validateRelease(candidate), /平台/);
+  assert.doesNotThrow(() => validateRelease(candidate, target));
+  assert.throws(
+    () =>
+      validateRelease({ ...candidate, shellApi: { min: 3, max: 3 } }, target),
+    /不兼容/,
+  );
+});
 test("TUF verified target set stages and activates without restoring stale business data", async () => {
   const scope = mockRepo(
     [

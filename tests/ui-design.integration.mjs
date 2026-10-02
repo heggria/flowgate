@@ -78,6 +78,12 @@ try {
   p.on("pageerror", (e) => errors.push(e.message));
   await p.getByRole("heading", { name: "概览", exact: true }).waitFor();
   await isolateProxyPort(p);
+  await p.evaluate(() =>
+    window.shell.request("appearance.set", { source: "light" }),
+  );
+  await p.waitForFunction(
+    () => document.documentElement.dataset.theme === "light",
+  );
   await app.evaluate(({ BrowserWindow }) =>
     BrowserWindow.getAllWindows()[0].setSize(1180, 820),
   );

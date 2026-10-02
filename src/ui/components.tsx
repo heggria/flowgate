@@ -1,3 +1,5 @@
+import { RecoveryLinks } from "./RecoveryLinks";
+import { safeMessage } from "../../packages/client/src/problems";
 import { client } from "../../packages/client/src/index";
 import {
   createContext,
@@ -439,9 +441,10 @@ export function FormFooter({
 }
 export function TaskError({ message }: { message?: string }) {
   return message ? (
-    <p className="taskerror" role="alert">
-      {message}
-    </p>
+    <div className="taskerror" role="alert">
+      <span>{safeMessage(message)}</span>
+      <RecoveryLinks message={message} />
+    </div>
   ) : null;
 }
 export function Pagination({

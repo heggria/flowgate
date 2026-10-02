@@ -6,9 +6,11 @@ final class HelperSession: NSObject, FlowGateHelperProtocol {
     let queue: DispatchQueue
     let lease: SessionLease
     let generation: UInt64
+    let recovery: SessionCleanup
     var monitor: DispatchSourceTimer?
     init(engine: NetworkEngine, queue: DispatchQueue, lease: SessionLease, generation: UInt64) {
         self.engine = engine; self.queue=queue; self.lease=lease; self.generation=generation
+        self.recovery = SessionCleanup(lease: lease, generation: generation)
         super.init()
         let timer=DispatchSource.makeTimerSource(queue:queue);timer.schedule(deadline:.now()+1,repeating:1)
         timer.setEventHandler { [weak self] in
@@ -24,17 +26,14 @@ final class HelperSession: NSObject, FlowGateHelperProtocol {
         }
         reply(self.engine.request(data))
     } }
-    func cleanup(attempt: Int = 0, completed: @escaping () -> Void) {
-        monitor?.cancel()
+    func cleanup(completed: @escaping () -> Void) {
         queue.async {
-            guard self.lease.beginCleanup(self.generation) else { return }
-            do {
-                if try self.lease.cleanup(self.generation, restore: { try self.engine.stop() }) { completed() }
-            }
-            catch {
+            self.monitor?.cancel()
+            self.recovery.start(restore: { try self.engine.stop() }, schedule: { delay, retry in
+                self.queue.asyncAfter(deadline: .now() + delay, execute: retry)
+            }, failed: {
                 self.engine.lastError = "会话已结束，系统设置恢复待重试"
-                if attempt < 3 { self.queue.asyncAfter(deadline: .now() + Double(attempt + 1)) { self.cleanup(attempt: attempt + 1, completed: completed) } }
-            }
+            }, completed: completed)
         }
     }
 }

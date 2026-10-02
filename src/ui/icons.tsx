@@ -1,5 +1,6 @@
 import brand from "../../assets/brand/mark.json";
 const paths: Record<string, string> = {
+  problems: "M12 3L2 21h20L12 3 M12 9v5 M12 17h.01",
   copy: "M8 8h12v13H8z M16 8V3H3v13h5",
   density: "M4 5h16 M4 10h16 M4 15h16 M4 20h16",
   check: "M5 12l4 4L19 6",

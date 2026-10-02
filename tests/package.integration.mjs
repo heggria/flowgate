@@ -7,13 +7,12 @@ import { promisify } from "node:util";
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
 import { isolateProxyPort } from "./proxy-fixture.mjs";
+import { verifyArtifacts } from "../scripts/artifacts.mjs";
 const bundle = resolve(
   process.env.FLOWGATE_PACKAGE_DIR ?? "work/package/FlowGate.app",
 );
 const resource = join(bundle, "Contents/Resources/app");
-const build = JSON.parse(
-  await readFile(join(resource, "dist/build-manifest.json"), "utf8"),
-);
+const build = await verifyArtifacts(join(resource, "dist"));
 const metadata = JSON.parse(
   await readFile(join(resource, "package.json"), "utf8"),
 );

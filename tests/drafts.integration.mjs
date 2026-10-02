@@ -30,7 +30,7 @@ try {
     .getByRole("textbox", { name: "DNS 服务器", exact: true })
     .fill("invalid-dns");
   await p.getByRole("button", { name: "保存网络设置" }).click();
-  await p.getByRole("alert").waitFor();
+  await p.getByRole("alert").filter({ hasText: "DNS 地址须为" }).waitFor();
   assert.equal(
     await p
       .getByRole("textbox", { name: "DNS 服务器", exact: true })

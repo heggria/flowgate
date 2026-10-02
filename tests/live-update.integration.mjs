@@ -1,4 +1,8 @@
 import { _electron as electron } from "playwright";
+import {
+  isContextReplacementError,
+  waitForAsyncPredicate,
+} from "./async-poll.mjs";
 import assert from "node:assert/strict";
 import { cp, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -65,17 +69,17 @@ try {
   );
   activation.catch(() => {}); // Successful activation replaces the requesting Renderer context.
   await page.waitForTimeout(500);
-  await page.waitForFunction(
-    async (id) => {
-      try {
-        const state = await window.shell.request("release.status");
-        return !state.updating && state.current === id;
-      } catch {
-        return false;
-      }
-    },
-    candidate.id,
-    { timeout: 30000 },
+  await waitForAsyncPredicate(
+    () =>
+      page.evaluate(async (id) => {
+        try {
+          const state = await window.shell.request("release.status");
+          return !state.updating && state.current === id;
+        } catch {
+          return false;
+        }
+      }, candidate.id),
+    { timeout: 30000, retryOnError: isContextReplacementError },
   );
   const port = await isolateProxyPort(page);
   await page.evaluate(() =>

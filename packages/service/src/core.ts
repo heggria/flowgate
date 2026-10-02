@@ -1,4 +1,5 @@
 import type { RuntimeModule } from "../../runtime/src/lifecycle";
+import { RECOVERY_DISCONNECT_OPERATION_ID } from "../../contracts/src/index";
 import { KernelRuntime, singBoxAdapter } from "./kernel/adapter";
 import { networkPath } from "../../domain/src/network-path";
 import { requestTrace } from "../../runtime/src/trace-context";
@@ -206,22 +207,54 @@ export class ServiceCore {
     if (this.lifecycle !== "ready" || this.network !== state) return;
     const kernel = await this.native.status();
     const own = kernel.tunInterface;
-    if (networkPath(previous, own) === networkPath(state, own)) return;
+    const dependencies = (this.store.configuration.externalNetworks ?? []).map(
+      (network) => network.interface,
+    );
+    if (
+      networkPath(previous, own, dependencies) ===
+      networkPath(state, own, dependencies)
+    )
+      return;
     this.invalidateMeasurements();
     if (kernel.status !== "running" || this.hasUnknownNative()) return;
-    if (kernel.appliedRevision !== this.store.configuration.revision) {
+    const applied = this.store.appliedConnection;
+    // Old persisted operations may predate plannedConnection. Their recorded
+    // mode still proves a matching native connection is system-owned.
+    const appliedOperation = this.store.operations.find(
+      (o) =>
+        o.id === kernel.operationId &&
+        o.kind === "proxy.connect" &&
+        o.state === "succeeded" &&
+        o.revision === kernel.appliedRevision,
+    );
+    const lostAppliedSystemProxy =
+      ((applied?.mode === "system" &&
+        applied.operationId === kernel.operationId &&
+        applied.revision === kernel.appliedRevision) ||
+        appliedOperation?.nativeMode === "system") &&
+      state.proxyEnabled &&
+      kernel.systemProxyOwned === false;
+    if (
+      kernel.appliedRevision !== this.store.configuration.revision &&
+      !lostAppliedSystemProxy
+    ) {
       state.warnings.push(
         "网络已变化，当前有尚未应用的配置；请确认配置后重新连接。",
       );
       return;
     }
-    const conflicts = networkConflicts(this.store.configuration, state, kernel);
-    const blocked = conflicts.filter((c) => c.severity === "blocked");
+    // A saved draft cannot change the mode of the connection already running.
+    // Yielding ownership stops that connection; it never applies the draft.
+    const blocked =
+      lostAppliedSystemProxy ||
+      networkConflicts(this.store.configuration, state, kernel).some(
+        (c) => c.severity === "blocked",
+      );
     const id = "network-" + randomUUID();
     // Reuse the same serialized, persisted native operation path as user changes.
     // Never reclaim proxy settings after another application has taken ownership.
     await this.request(
-      blocked.length ? "proxy.disconnect" : "proxy.connect",
+      blocked ? "proxy.disconnect" : "proxy.connect",
       {
         networkExpectedOperation: kernel.operationId ?? null,
         networkExpectedRevision: kernel.appliedRevision,
@@ -229,7 +262,7 @@ export class ServiceCore {
       id,
     );
     (this.network ?? state).warnings.push(
-      blocked.length
+      blocked
         ? "检测到网络冲突，已停止本应用连接并按所有权恢复设置。解决冲突后请重新连接。"
         : "网络路径已变化，已用当前已应用配置重新建立本应用连接。",
     );
@@ -286,16 +319,43 @@ export class ServiceCore {
     kernel ??= await this.native.status();
     let changed = false;
     for (const o of this.store.operations) {
+      // A user-requested emergency stop is an explicit recovery barrier, not
+      // evidence that the original connect succeeded. A manual bridge cannot
+      // attest that a privileged helper has restored its resources.
+      if (
+        o.state === "unknown" &&
+        ["proxy.connect", "proxy.disconnect"].includes(o.kind) &&
+        kernel.status === "stopped" &&
+        kernel.operationId === RECOVERY_DISCONNECT_OPERATION_ID &&
+        (kernel.systemControl || o.nativeMode === "manual")
+      ) {
+        o.state = o.kind === "proxy.disconnect" ? "succeeded" : "failed";
+        o.completedAt = new Date().toISOString();
+        o.message = "已通过紧急断开停止本应用连接，可以重新连接。";
+        o.recoveredBy = RECOVERY_DISCONNECT_OPERATION_ID;
+        changed = true;
+        continue;
+      }
       if (
         o.state === "unknown" &&
         kernel.operationId === o.id &&
         ((o.kind === "proxy.connect" &&
           kernel.status === "running" &&
           kernel.appliedRevision === o.revision) ||
-          (o.kind === "proxy.disconnect" && kernel.status === "stopped"))
+          (o.kind === "proxy.disconnect" &&
+            kernel.status === "stopped" &&
+            (kernel.systemControl || o.nativeMode === "manual")))
       ) {
         o.state = "succeeded";
         o.completedAt = new Date().toISOString();
+        if (
+          o.kind === "proxy.connect" &&
+          o.plannedConnection?.operationId === o.id &&
+          o.plannedConnection.revision === o.revision &&
+          o.plannedConnection.mode === o.nativeMode
+        ) {
+          this.store.appliedConnection = o.plannedConnection;
+        }
         changed = true;
       }
     }
@@ -467,8 +527,16 @@ export class ServiceCore {
       signal?.throwIfAborted();
       await this.reconcileNative();
       const previous = this.store.operations.find((o) => o.id === operationId);
-      if (previous)
+      if (previous) {
+        if (previous.kind !== method)
+          throw new Error("此操作标识已用于其他操作，请使用新的标识");
+        if (previous.state !== "succeeded")
+          throw Object.assign(
+            new Error(previous.message || "此前操作尚未成功，请核对操作记录"),
+            { outcome: previous.state === "failed" ? "failed" : "unknown" },
+          );
         return { operation: previous, snapshot: await this.snapshot() };
+      }
       if (
         ["proxy.connect", "proxy.disconnect"].includes(method) &&
         this.hasUnknownNative()
@@ -483,19 +551,68 @@ export class ServiceCore {
           current.status !== "running" ||
           (current.operationId ?? null) !== payload.networkExpectedOperation ||
           current.appliedRevision !== payload.networkExpectedRevision ||
-          this.store.configuration.revision !== payload.networkExpectedRevision
+          (method !== "proxy.disconnect" &&
+            this.store.configuration.revision !==
+              payload.networkExpectedRevision)
         )
           return;
+      }
+      let disconnectMode: Operation["nativeMode"];
+      if (method === "proxy.disconnect") {
+        // The last displayed summary can belong to an older connection. Only
+        // native's exact active operation/revision may establish stop authority.
+        // An unmatched source stays unknown; a manual draft proves nothing.
+        const current = await this.native.status();
+        const applied = this.store.appliedConnection;
+        disconnectMode =
+          current.operationId !== undefined &&
+          current.appliedRevision !== undefined &&
+          applied?.operationId === current.operationId &&
+          applied.revision === current.appliedRevision
+            ? applied.mode
+            : this.store.operations.find(
+                (o) =>
+                  o.id === current.operationId &&
+                  o.kind === "proxy.connect" &&
+                  o.state === "succeeded" &&
+                  o.revision === current.appliedRevision,
+              )?.nativeMode;
       }
       const operation: Operation = {
         id: operationId,
         traceId:
           requestTrace.getStore()?.traceId ?? randomUUID().replaceAll("-", ""),
         kind: method,
+        ...(["proxy.connect", "proxy.disconnect"].includes(method)
+          ? {
+              nativeMode:
+                method === "proxy.disconnect"
+                  ? disconnectMode
+                  : this.store.configuration.settings.mode,
+            }
+          : {}),
         state: "pending" as const,
         revision: this.store.configuration.revision,
         startedAt: new Date().toISOString(),
       };
+      if (method === "proxy.connect") {
+        const c = this.store.configuration,
+          id = c.settings.selectedNode;
+        operation.plannedConnection = {
+          revision: c.revision,
+          operationId,
+          selectedNode: id,
+          outletName:
+            c.nodes.find((n) => n.id === id)?.name ??
+            c.groups?.find((g) => g.id === id)?.name ??
+            c.externalNetworks?.find((n) => n.id === id)?.name ??
+            (id === "direct" ? "直连" : id),
+          mode: c.settings.mode,
+          listenPort: c.settings.listenPort,
+          finalOutbound: c.settings.finalOutbound,
+          ruleCount: c.rules.length,
+        };
+      }
       operation.context = {
         ...requestTrace.getStore(),
         operationId: operation.id,
@@ -584,22 +701,7 @@ export class ServiceCore {
             operationId,
             this.store.configuration.settings.mode,
           );
-          const c = this.store.configuration,
-            id = c.settings.selectedNode;
-          this.store.appliedConnection = {
-            revision: c.revision,
-            operationId,
-            selectedNode: id,
-            outletName:
-              c.nodes.find((n) => n.id === id)?.name ??
-              c.groups?.find((g) => g.id === id)?.name ??
-              c.externalNetworks?.find((n) => n.id === id)?.name ??
-              (id === "direct" ? "直连" : id),
-            mode: c.settings.mode,
-            listenPort: c.settings.listenPort,
-            finalOutbound: c.settings.finalOutbound,
-            ruleCount: c.rules.length,
-          };
+          this.store.appliedConnection = operation.plannedConnection;
         } else if (method === "proxy.disconnect") {
           this.invalidateMeasurements();
           await this.native.stop(operationId);
@@ -671,6 +773,25 @@ export class ServiceCore {
             );
           }
           if (method === "node.remove") {
+            if (!next.nodes.some((node) => node.id === payload?.id))
+              throw new Error("节点不存在，请刷新后重试");
+            const source = next.ruleSources?.find(
+              (source) => source.outbound === payload.id,
+            );
+            if (source)
+              throw new Error(
+                `规则集「${source.name}」仍使用此节点，请先在分流规则中移除该来源`,
+              );
+            for (const group of next.groups ?? []) {
+              if (!group.members.includes(payload.id)) continue;
+              const remaining = group.members.filter((id) => id !== payload.id);
+              if (!remaining.length)
+                throw new Error(
+                  `此节点是策略组「${group.name}」的最后一个成员，请先更新或重新导入该策略组`,
+                );
+              group.members = remaining;
+              if (group.selected === payload.id) group.selected = remaining[0];
+            }
             next.nodes = next.nodes.filter((n) => n.id !== payload?.id);
             if (next.settings.selectedNode === payload?.id)
               next.settings.selectedNode = "direct";
@@ -877,12 +998,16 @@ export class ServiceCore {
   async resume() {
     await this.store.drain();
     await this.reconcileNative();
-    this.networkObserver.resume();
-    await this.networkObserver.refresh().catch(() => {});
     this.subscriptions.resume();
     this.store.resume();
     this.native.resume();
     this.lifecycle = "ready";
+    // Publish the fresh path only after serialized connection writes can run.
+    // Otherwise the first post-sleep transition becomes the baseline while
+    // coordinateNetwork is fenced, and unchanged polls can never recover it.
+    this.networkObserver.resume();
+    await this.networkObserver.refresh().catch(() => {});
+    await this.networkCoordination;
     this.subscriptionRefresh.start();
   }
   async resolveEgress(target: string) {

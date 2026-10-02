@@ -1,6 +1,7 @@
 # FlowGate
 
 Read REQUIREMENTS.md and work/STATE.md. The user approved the full architecture implementation on 2026-09-09. Codex is the confirmed visual reference.
+Read RELEASE_READINESS.md for the user's ongoing consistency, completeness and release-readiness objective. Keep release claims aligned with evidence for the exact candidate build.
 
 ## Boundaries
 
@@ -9,6 +10,8 @@ Stable shell imports contracts and release verification, never business implemen
 ## Checks
 
 npm run typecheck; npm test; npm run build; npm run test:e2e. Tests use isolated data and never change global routes/DNS/proxy settings. Real packet forwarding is a separate acceptance check. Never claim simulated connectivity as actual.
+
+The explicit `privileged-ci.integration.ts` acceptance step is restricted to ephemeral GitHub-hosted macOS runners, refuses any existing helper installation and always attempts production uninstall/restoration. It may change that disposable runner's proxy settings and routes, including a second independent TUN kernel and production full-TUN acceptance. Full-TUN fixtures must keep non-fixture traffic on the direct outbound and always verify restoration; all privilege and fresh-runner guards still apply. Never enable it on the user's Mac; ordinary local tests retain the no-global-changes rule.
 
 ## Safety and continuity
 

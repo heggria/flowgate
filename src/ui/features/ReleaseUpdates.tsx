@@ -1,3 +1,4 @@
+import { shellRequest } from "../../../packages/client/src/index";
 import {
   Button,
   Combobox,
@@ -8,7 +9,10 @@ import {
   InfoTip,
 } from "../components";
 import { useEffect, useState } from "react";
-import type { ReleaseSet } from "../../../packages/contracts/src/index";
+import type {
+  ApplicationUpdateState,
+  ReleaseSet,
+} from "../../../packages/contracts/src/index";
 import type { ExtensionState } from "../../../packages/contracts/src/extensions";
 export function ReleaseUpdates({
   run,
@@ -28,16 +32,30 @@ export function ReleaseUpdates({
     versions?: Record<string, unknown>;
     events?: { stage: string; at: string; releaseSet: string }[];
   } | null>(null);
+  const [application, setApplication] = useState<ApplicationUpdateState | null>(
+    null,
+  );
+  const acceptApplication = (next?: ApplicationUpdateState) => {
+    if (next)
+      setApplication((current) =>
+        current && current.revision > next.revision ? current : next,
+      );
+  };
+  const applicationBusy =
+    application?.phase === "checking" || application?.phase === "downloading";
   const [updateMessage, setUpdateMessage] = useState("");
   const [checking, setChecking] = useState(false),
     [updateFailed, setUpdateFailed] = useState(false);
   const [channel, setChannel] = useState<"stable" | "preview">("stable");
   useEffect(() => {
     let active = true;
-    void window.shell
-      .request("release.status")
+    const unsubscribe = window.shell.onApplicationUpdate?.((value) => {
+      if (active) acceptApplication(value);
+    });
+    void shellRequest("release.status")
       .then((value: any) => {
         if (!active) return;
+        acceptApplication(value.application);
         setReleaseStatus(value);
         setChannel(value.channel ?? "stable");
       })
@@ -49,6 +67,7 @@ export function ReleaseUpdates({
       });
     return () => {
       active = false;
+      unsubscribe?.();
     };
   }, []);
   const [candidate, setCandidate] = useState<ReleaseSet | null>(null);
@@ -77,7 +96,7 @@ export function ReleaseUpdates({
         {releaseStatus?.revoked?.includes(releaseStatus.release) ? (
           <Button
             className="secondary"
-            onClick={() => run(() => window.shell.request("recovery.restore"))}
+            onClick={() => run(() => shellRequest("recovery.restore"))}
           >
             恢复内置版本
           </Button>
@@ -122,7 +141,7 @@ export function ReleaseUpdates({
             setUpdateFailed(false);
             setUpdateMessage("正在验证更新目录…");
             try {
-              const candidate = (await window.shell.request("release.check", {
+              const candidate = (await shellRequest("release.check", {
                 channel,
               })) as ReleaseSet;
               setCandidate(candidate);
@@ -135,9 +154,9 @@ export function ReleaseUpdates({
             } finally {
               setChecking(false);
               setReleaseStatus(
-                (await window.shell
-                  .request("release.status")
-                  .catch(() => releaseStatus)) as any,
+                (await shellRequest("release.status").catch(
+                  () => releaseStatus,
+                )) as any,
               );
             }
           })
@@ -196,26 +215,43 @@ export function ReleaseUpdates({
           className="primary"
           pending={Boolean(busy || checking || releaseStatus?.updating)}
           onClick={() =>
-            run(() =>
-              window.shell.request("release.activate", { id: candidate.id }),
-            )
+            run(() => shellRequest("release.activate", { id: candidate.id }))
           }
         >
           应用更新
         </Button>
       ) : null}
+      {application?.phase === "failed" ? (
+        <TaskError message={application.message} />
+      ) : application ? (
+        <p className="inlinestatus" role="status">
+          {application.message}
+        </p>
+      ) : null}
       <div className="sectionactions">
         <Button
           className="quiet"
           pending={Boolean(busy || checking)}
-          onClick={() => run(() => window.shell.request("window.reload"))}
+          onClick={() => run(() => shellRequest("window.reload"))}
         >
           重新加载界面
         </Button>
         <Button
           className="quiet"
-          pending={Boolean(busy || checking)}
-          onClick={() => run(() => window.shell.request("application.check"))}
+          pending={Boolean(busy || checking || applicationBusy)}
+          disabled={application?.phase === "ready"}
+          onClick={() =>
+            run(async () => {
+              try {
+                await shellRequest("application.check");
+              } finally {
+                const status = (await shellRequest("release.status").catch(
+                  () => null,
+                )) as { application?: ApplicationUpdateState } | null;
+                acceptApplication(status?.application);
+              }
+            })
+          }
         >
           检查完整应用更新
         </Button>
