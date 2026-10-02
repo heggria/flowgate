@@ -16,7 +16,7 @@ Remote CI results, package checks and release artifacts are distinct evidence. A
 
 ## Independently signed business delivery
 
-The real [updates branch](https://github.com/heggria/flowgate/tree/updates) contains TUF metadata and digest-addressed Release Set files. `release/trusted-root.json` and HTTPS URLs in `src/desktop/update-config.json` establish the client trust anchor. The first business release uses verified source `75a07d246abac4e3f1c044d525123c6dedb61fb2`.
+The real [updates branch](https://github.com/heggria/flowgate/tree/updates) contains TUF metadata and digest-addressed Release Set files. `release/trusted-root.json` and HTTPS URLs in `src/desktop/update-config.json` establish the client trust anchor. Historical API/schema-1 releases are not compatible with current API/schema-2 applications. Before claiming this channel is ready for a candidate, verify its actual channel manifest against that candidate, publish compatible signed artifacts, and run the live-feed acceptance. A successful metadata refresh does not satisfy those checks.
 
 See [BUSINESS_UPDATES.md](BUSINESS_UPDATES.md) for exact local signing, publication, promotion, revocation, expiry renewal and old/new double-signed root rotation procedures. Root and targets private keys remain outside the build checkout on the operator machine. Only snapshot/timestamp keys are stored in GitHub secrets; the six-hour refresh workflow cannot sign new executable targets. An expired offline authorization fails closed and requires the local signer.
 
